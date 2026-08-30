@@ -55,7 +55,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "2.3.1";
+    public override string ModuleVersion => "2.3.2";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -99,7 +99,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v2.3.1 loaded.");
+        Console.WriteLine("[ZombieKnifeMenu] v2.3.2 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -274,20 +274,19 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         try
         {
-            // CUserMessageShowMenu is the Source 2 native numbered menu used by
-            // the classic/radio-style HUD. Its actual protobuf fields are:
-            // validslots, displaytime, needmore, menustring.
+            // IMPORTANT: use the CS-specific CCSUsrMsg_ShowMenu, NOT the generic
+            // Source2 ShowMenu message. The CS-specific protobuf uses:
+            // bits_valid_slots, display_time, menu_string.
             // Valid keys 1,2,3,4,5,9 -> bits 0,1,2,3,4,8 = 287.
-            using var message = UserMessage.FromPartialName("CUserMessageShowMenu");
-            message.SetUInt("validslots", 287);
-            message.SetUInt("displaytime", 20);
-            message.SetBool("needmore", false);
-            message.SetString("menustring", menuText);
+            using var message = UserMessage.FromPartialName("CCSUsrMsg_ShowMenu");
+            message.SetInt("bits_valid_slots", 287);
+            message.SetInt("display_time", 20);
+            message.SetString("menu_string", menuText);
             message.Recipients.Add(player);
             message.Send();
 
             Console.WriteLine(
-                $"[ZombieKnifeMenu] Native left ShowMenu sent to {player.PlayerName}.");
+                $"[ZombieKnifeMenu] CCSUsrMsg_ShowMenu sent to {player.PlayerName}.");
         }
         catch (Exception ex)
         {
@@ -305,11 +304,10 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         try
         {
-            using var message = UserMessage.FromPartialName("CUserMessageShowMenu");
-            message.SetUInt("validslots", 0);
-            message.SetUInt("displaytime", 0);
-            message.SetBool("needmore", false);
-            message.SetString("menustring", "");
+            using var message = UserMessage.FromPartialName("CCSUsrMsg_ShowMenu");
+            message.SetInt("bits_valid_slots", 0);
+            message.SetInt("display_time", 0);
+            message.SetString("menu_string", "");
             message.Recipients.Add(player);
             message.Send();
         }
@@ -331,6 +329,9 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (command.ArgCount < 2 ||
             !int.TryParse(command.GetArg(1), out var key))
             return HookResult.Handled;
+
+        Console.WriteLine(
+            $"[ZombieKnifeMenu] menuselect {key} from {validPlayer.PlayerName}.");
 
         HandleKnifeMenuSelection(validPlayer, key);
         return HookResult.Handled;

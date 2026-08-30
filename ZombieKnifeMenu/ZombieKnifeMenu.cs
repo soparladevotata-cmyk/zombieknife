@@ -6,9 +6,9 @@ using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Entities.Constants;
 using CounterStrikeSharp.API.Modules.Memory;
-using CounterStrikeSharp.API.Modules.Menu;
 using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.Utils;
+using CounterStrikeSharp.API.Modules.UserMessages;
 
 namespace ZombieKnifeMenu;
 
@@ -55,7 +55,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "2.2.0";
+    public override string ModuleVersion => "2.3.0";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -84,6 +84,10 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         AddCommand("css_k5", "Knife menu key 5", (p, c) => HandleBoundMenuKey(p, 5));
         AddCommand("css_k9", "Knife menu key 9", (p, c) => HandleBoundMenuKey(p, 9));
 
+        // Native CS2 ShowMenu (same HUD family as the radio menu) sends
+        // "menuselect N" when the player presses a numbered option.
+        AddCommandListener("menuselect", HandleNativeMenuSelect, HookMode.Pre);
+
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
         RegisterEventHandler<EventPlayerTeam>(OnPlayerTeam);
@@ -95,7 +99,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v2.2.0 loaded.");
+        Console.WriteLine("[ZombieKnifeMenu] v2.3.0 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -105,7 +109,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         foreach (var player in Utilities.GetPlayers())
         {
             if (IsRealPlayer(player))
-                MenuManager.CloseActiveMenu(player);
+                CloseNativeKnifeMenu(player);
 
             ResetMovement(player);
             ResetKnifeSubclass(player);
@@ -246,86 +250,96 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (!IsRealPlayer(player))
             return;
 
-        // Official CounterStrikeSharp CenterHtmlMenu.
-        // Its callbacks are driven by MenuManager.OnKeyPress.
-        var selected = GetSelection(player);
-        var hasVip = HasVip(player);
-
-        var menu = new CenterHtmlMenu("Knife Menu", this)
-        {
-            ExitButton = true,
-            PostSelectAction = PostSelectAction.Close,
-            TitleColor = "gold",
-            EnabledColor = "white",
-            DisabledColor = "gray",
-            CloseColor = "tomato"
-        };
-
-        menu.AddMenuOption(
-            $"Speed Knife{SelectedSuffix(selected, KnifeType.Speed)}",
-            (p, _) => SelectKnife(p, KnifeType.Speed));
-
-        menu.AddMenuOption(
-            $"Gravity Knife{SelectedSuffix(selected, KnifeType.Gravity)}",
-            (p, _) => SelectKnife(p, KnifeType.Gravity));
-
-        menu.AddMenuOption(
-            $"Knockback Knife{SelectedSuffix(selected, KnifeType.Knockback)}",
-            (p, _) => SelectKnife(p, KnifeType.Knockback));
-
-        menu.AddMenuOption(
-            $"Damage Knife{SelectedSuffix(selected, KnifeType.Damage)}",
-            (p, _) => SelectKnife(p, KnifeType.Damage));
-
-        menu.AddMenuOption(
-            hasVip
-                ? $"VIP Knife{SelectedSuffix(selected, KnifeType.Vip)}"
-                : "VIP Knife [VIP ONLY]",
-            (p, _) => SelectKnife(p, KnifeType.Vip),
-            disabled: !hasVip);
-
         _openKnifeMenus.Add(player.SteamID);
-        menu.Open(player);
+        ShowNativeKnifeMenu(player);
     }
 
-    private static string SelectedSuffix(KnifeType selected, KnifeType type)
-        => selected == type ? " [SELECTED]" : "";
+    private void ShowNativeKnifeMenu(CCSPlayerController player)
+    {
+        var selected = GetSelection(player);
+        var vip = HasVip(player);
 
-    private void HandleBoundMenuKey(CCSPlayerController? player, int key)
+        string Mark(KnifeType type) => selected == type ? " [SELECTED]" : "";
+
+        var menuText =
+            "Knife Menu\n\n" +
+            $"1. Speed Knife{Mark(KnifeType.Speed)}\n" +
+            $"2. Gravity Knife{Mark(KnifeType.Gravity)}\n" +
+            $"3. Knockback Knife{Mark(KnifeType.Knockback)}\n" +
+            $"4. Damage Knife{Mark(KnifeType.Damage)}\n" +
+            (vip
+                ? $"5. VIP Knife{Mark(KnifeType.Vip)}\n"
+                : "5. VIP Knife [VIP ONLY]\n") +
+            "\n9. Close";
+
+        try
+        {
+            // CCSUsrMsg_ShowMenu is CS2's native numbered-menu message.
+            // Valid keys: 1,2,3,4,5,9 -> bits 0,1,2,3,4,8 = 287.
+            using var message = UserMessage.FromPartialName("ShowMenu");
+            message.SetInt("bits_valid_slots", 287);
+            message.SetInt("display_time", -1);
+            message.SetString("menu_string", menuText);
+            message.Recipients.Add(player);
+            message.Send();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"[ZombieKnifeMenu] Native ShowMenu failed for {player.PlayerName}: {ex}");
+
+            // Fallback only if Valve's native ShowMenu cannot be created.
+            player.PrintToCenterHtml(
+                "Knife Menu<br>1. Speed Knife<br>2. Gravity Knife<br>" +
+                "3. Knockback Knife<br>4. Damage Knife<br>5. VIP Knife<br>9. Close",
+                8);
+        }
+    }
+
+    private void CloseNativeKnifeMenu(CCSPlayerController player)
+    {
+        _openKnifeMenus.Remove(player.SteamID);
+
+        try
+        {
+            using var message = UserMessage.FromPartialName("ShowMenu");
+            message.SetInt("bits_valid_slots", 0);
+            message.SetInt("display_time", 0);
+            message.SetString("menu_string", "");
+            message.Recipients.Add(player);
+            message.Send();
+        }
+        catch
+        {
+        }
+    }
+
+    private HookResult HandleNativeMenuSelect(CCSPlayerController? player, CommandInfo command)
     {
         if (!IsRealPlayer(player))
-            return;
+            return HookResult.Continue;
 
         var validPlayer = player!;
 
-        // Outside Knife Menu, number keys keep their normal weapon-slot behavior.
         if (!_openKnifeMenus.Contains(validPlayer.SteamID))
-        {
-            try
-            {
-                validPlayer.ExecuteClientCommand($"slot{key}");
-            }
-            catch
-            {
-            }
+            return HookResult.Continue;
 
+        if (command.ArgCount < 2 ||
+            !int.TryParse(command.GetArg(1), out var key))
+            return HookResult.Handled;
+
+        HandleKnifeMenuSelection(validPlayer, key);
+        return HookResult.Handled;
+    }
+
+    private void HandleKnifeMenuSelection(CCSPlayerController player, int key)
+    {
+        if (!_openKnifeMenus.Contains(player.SteamID))
             return;
-        }
 
-        // Exact CS 1.6 / radio-style mapping requested:
-        // 1-5 = choose knife, 9 = close.
         if (key == 9)
         {
-            _openKnifeMenus.Remove(validPlayer.SteamID);
-
-            try
-            {
-                MenuManager.CloseActiveMenu(validPlayer);
-            }
-            catch
-            {
-            }
-
+            CloseNativeKnifeMenu(player);
             return;
         }
 
@@ -342,18 +356,40 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (selected == 0)
             return;
 
-        // Close the visual menu immediately, then apply the chosen knife.
-        _openKnifeMenus.Remove(validPlayer.SteamID);
-
-        try
+        if (selected == KnifeType.Vip && !HasVip(player))
         {
-            MenuManager.CloseActiveMenu(validPlayer);
-        }
-        catch
-        {
+            player.PrintToChat(" \x02[Knife Menu]\x01 VIP Knife este doar pentru VIP.");
+            ShowNativeKnifeMenu(player);
+            return;
         }
 
-        SelectKnife(validPlayer, selected);
+        CloseNativeKnifeMenu(player);
+        SelectKnife(player, selected);
+    }
+
+    private void HandleBoundMenuKey(CCSPlayerController? player, int key)
+    {
+        if (!IsRealPlayer(player))
+            return;
+
+        var validPlayer = player!;
+
+        // Compatibility with clients that already used !bindknife in an older build.
+        // Outside the menu, keep the normal slot behavior.
+        if (!_openKnifeMenus.Contains(validPlayer.SteamID))
+        {
+            try
+            {
+                validPlayer.ExecuteClientCommand($"slot{key}");
+            }
+            catch
+            {
+            }
+
+            return;
+        }
+
+        HandleKnifeMenuSelection(validPlayer, key);
     }
 
     private void SelectKnife(CCSPlayerController player, KnifeType type)
@@ -361,7 +397,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (!IsRealPlayer(player))
             return;
 
-        _openKnifeMenus.Remove(player.SteamID);
+        CloseNativeKnifeMenu(player);
 
         if (type == KnifeType.Vip && !HasVip(player))
         {

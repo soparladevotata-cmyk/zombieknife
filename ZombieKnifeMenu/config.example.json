@@ -1,0 +1,10 @@
+{
+  "SpeedMultiplier": 1.15,
+  "GravityScale": 0.72,
+  "KnockbackHorizontal": 420.0,
+  "KnockbackVertical": 170.0,
+  "DamageMultiplier": 1.5,
+  "HumanTeam": 3,
+  "ZombieTeam": 2,
+  "RefreshEveryTicks": 4
+}

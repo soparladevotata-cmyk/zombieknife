@@ -1,4 +1,3 @@
-
 using System.Text.Json;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
@@ -66,7 +65,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "1.9.1";
+    public override string ModuleVersion => "1.9.2";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -105,7 +104,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Logger.LogInformation("[ZombieKnifeMenu] v1.9.1 loaded.");
+        Console.WriteLine("[ZombieKnifeMenu] v1.9.2 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -408,7 +407,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var knife = GetKnife(player);
         if (knife == null || !knife.IsValid)
         {
-            Logger.LogDebug("[ZombieKnifeMenu] Knife entity not ready for {Player}.", player.PlayerName);
+            Console.WriteLine($"[ZombieKnifeMenu] Knife entity not ready for {player.PlayerName}.");
             return;
         }
 
@@ -424,18 +423,13 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
                 caller: player.PlayerPawn.Value,
                 value: subclass);
 
-            Logger.LogInformation(
-                "[ZombieKnifeMenu] Applied {Subclass} to {Player}.",
-                subclass,
-                player.PlayerName);
+            Console.WriteLine(
+                $"[ZombieKnifeMenu] Applied {subclass} to {player.PlayerName}.");
         }
         catch (Exception ex)
         {
-            Logger.LogError(
-                ex,
-                "[ZombieKnifeMenu] Failed to apply subclass {Subclass} to {Player}.",
-                subclass,
-                player.PlayerName);
+            Console.WriteLine(
+                $"[ZombieKnifeMenu] Failed to apply subclass {subclass} to {player.PlayerName}: {ex}");
         }
     }
 
@@ -715,8 +709,8 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex,
-                "[ZombieKnifeMenu] Failed to load config.json; using defaults.");
+            Console.WriteLine(
+                $"[ZombieKnifeMenu] Failed to load config.json; using defaults: {ex}");
         }
     }
 
@@ -743,8 +737,8 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex,
-                "[ZombieKnifeMenu] Failed to load knife selections.");
+            Console.WriteLine(
+                $"[ZombieKnifeMenu] Failed to load knife selections: {ex}");
         }
     }
 
@@ -760,8 +754,8 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex,
-                "[ZombieKnifeMenu] Failed to save knife selections.");
+            Console.WriteLine(
+                $"[ZombieKnifeMenu] Failed to save knife selections: {ex}");
         }
     }
 }

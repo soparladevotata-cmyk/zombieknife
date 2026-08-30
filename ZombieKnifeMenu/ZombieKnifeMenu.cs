@@ -55,7 +55,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "2.3.0";
+    public override string ModuleVersion => "2.3.1";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -99,7 +99,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v2.3.0 loaded.");
+        Console.WriteLine("[ZombieKnifeMenu] v2.3.1 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -274,25 +274,28 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         try
         {
-            // CCSUsrMsg_ShowMenu is CS2's native numbered-menu message.
-            // Valid keys: 1,2,3,4,5,9 -> bits 0,1,2,3,4,8 = 287.
-            using var message = UserMessage.FromPartialName("ShowMenu");
-            message.SetInt("bits_valid_slots", 287);
-            message.SetInt("display_time", -1);
-            message.SetString("menu_string", menuText);
+            // CUserMessageShowMenu is the Source 2 native numbered menu used by
+            // the classic/radio-style HUD. Its actual protobuf fields are:
+            // validslots, displaytime, needmore, menustring.
+            // Valid keys 1,2,3,4,5,9 -> bits 0,1,2,3,4,8 = 287.
+            using var message = UserMessage.FromPartialName("CUserMessageShowMenu");
+            message.SetUInt("validslots", 287);
+            message.SetUInt("displaytime", 20);
+            message.SetBool("needmore", false);
+            message.SetString("menustring", menuText);
             message.Recipients.Add(player);
             message.Send();
+
+            Console.WriteLine(
+                $"[ZombieKnifeMenu] Native left ShowMenu sent to {player.PlayerName}.");
         }
         catch (Exception ex)
         {
             Console.WriteLine(
                 $"[ZombieKnifeMenu] Native ShowMenu failed for {player.PlayerName}: {ex}");
 
-            // Fallback only if Valve's native ShowMenu cannot be created.
-            player.PrintToCenterHtml(
-                "Knife Menu<br>1. Speed Knife<br>2. Gravity Knife<br>" +
-                "3. Knockback Knife<br>4. Damage Knife<br>5. VIP Knife<br>9. Close",
-                8);
+            player.PrintToChat(
+                " \x02[Knife Menu]\x01 Native radio menu failed. Check server console.");
         }
     }
 
@@ -302,10 +305,11 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         try
         {
-            using var message = UserMessage.FromPartialName("ShowMenu");
-            message.SetInt("bits_valid_slots", 0);
-            message.SetInt("display_time", 0);
-            message.SetString("menu_string", "");
+            using var message = UserMessage.FromPartialName("CUserMessageShowMenu");
+            message.SetUInt("validslots", 0);
+            message.SetUInt("displaytime", 0);
+            message.SetBool("needmore", false);
+            message.SetString("menustring", "");
             message.Recipients.Add(player);
             message.Send();
         }

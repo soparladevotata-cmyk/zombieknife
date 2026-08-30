@@ -1,4 +1,3 @@
-
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
@@ -65,7 +64,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "1.9.3";
+    public override string ModuleVersion => "1.9.4";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -110,7 +109,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         AddTimer(0.35f, RefreshOpenKnifeMenus,
             TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v1.9.3 loaded.");
+        Console.WriteLine("[ZombieKnifeMenu] v1.9.4 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -749,12 +748,12 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             if (!File.Exists(SettingsPath))
             {
                 File.WriteAllText(SettingsPath,
-                    JsonSerializer.Serialize(_settings,
-                        new JsonSerializerOptions { WriteIndented = true }));
+                    System.Text.Json.JsonSerializer.Serialize(_settings,
+                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
                 return;
             }
 
-            var loaded = JsonSerializer.Deserialize<KnifeSettings>(
+            var loaded = System.Text.Json.JsonSerializer.Deserialize<KnifeSettings>(
                 File.ReadAllText(SettingsPath));
 
             if (loaded != null)
@@ -774,7 +773,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             if (!File.Exists(SelectionsPath))
                 return;
 
-            var raw = JsonSerializer.Deserialize<Dictionary<string, int>>(
+            var raw = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, int>>(
                 File.ReadAllText(SelectionsPath));
 
             if (raw == null)
@@ -802,8 +801,8 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             var raw = _selections.ToDictionary(x => x.Key, x => (int)x.Value);
 
             File.WriteAllText(SelectionsPath,
-                JsonSerializer.Serialize(raw,
-                    new JsonSerializerOptions { WriteIndented = true }));
+                System.Text.Json.JsonSerializer.Serialize(raw,
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex)
         {

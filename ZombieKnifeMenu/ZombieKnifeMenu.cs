@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
@@ -12,7 +11,6 @@ using CounterStrikeSharp.API.Modules.Memory;
 using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.Utils;
 using CS2ScreenMenuAPI;
-using CS2ScreenMenuAPI.Enums;
 
 namespace ZombieKnifeMenu;
 
@@ -64,7 +62,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "1.3.0";
+    public override string ModuleVersion => "1.3.1";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -97,7 +95,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Logger.LogInformation("[ZombieKnifeMenu] v1.3.0 loaded.");
+        Logger.LogInformation("[ZombieKnifeMenu] v1.3.1 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -142,7 +140,6 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             ShowDisabledOptionNum = true
         };
 
-        menu.SetMenuType(MenuType.KeyPress);
 
         menu.AddItem(BuildLabel(player, KnifeType.Speed, "Speed Knife"),
             (p, _) => SelectKnife(p, KnifeType.Speed));
@@ -293,7 +290,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var viewModel = GetViewModel(player);
         if (viewModel != null && viewModel.IsValid)
         {
-            var currentView = viewModel.VMName ?? string.Empty;
+            var currentView = GetModelPath(viewModel);
 
             if (!string.IsNullOrWhiteSpace(currentView) &&
                 !IsCustomKnifeModel(currentView) &&
@@ -578,20 +575,23 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         return entity.CBodyComponent?.SceneNode?.GetSkeletonInstance()?.ModelState?.ModelName ?? string.Empty;
     }
 
-    private static unsafe CBaseViewModel? GetViewModel(CCSPlayerController player)
+    private static CBaseModelEntity? GetViewModel(CCSPlayerController player)
     {
-        nint? handle = player.PlayerPawn.Value?.ViewModelServices?.Handle;
-        if (handle == null || !handle.HasValue)
+        var vmService = player.PlayerPawn.Value?.ViewModelServices;
+        if (vmService == null)
             return null;
 
-        var services = new CCSPlayer_ViewModelServices(handle.Value);
-        nint ptr = services.Handle + Schema.GetSchemaOffset(
-            "CCSPlayer_ViewModelServices", "m_hViewModel");
+        // m_hViewModel is an array; reading the field as a handle gives slot 0,
+        // which is the normal first-person weapon viewmodel.
+        var viewModelHandle = Schema.GetDeclaredClass<CHandle<CBaseModelEntity>>(
+            vmService.Handle,
+            "CCSPlayer_ViewModelServices",
+            "m_hViewModel");
 
-        Span<nint> viewModels = MemoryMarshal.CreateSpan(ref ptr, 3);
-        var viewModel = new CHandle<CBaseViewModel>(viewModels[0]);
+        if (!viewModelHandle.IsValid)
+            return null;
 
-        return viewModel.Value;
+        return viewModelHandle.Value;
     }
 
     private static void SetViewModel(CCSPlayerController player, string model)

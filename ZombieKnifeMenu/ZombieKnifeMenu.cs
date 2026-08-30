@@ -8,9 +8,9 @@ using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Entities.Constants;
 using CounterStrikeSharp.API.Modules.Memory;
+using CounterStrikeSharp.API.Modules.Menu;
 using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.Utils;
-using CS2ScreenMenuAPI;
 
 namespace ZombieKnifeMenu;
 
@@ -56,7 +56,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "1.4.1";
+    public override string ModuleVersion => "1.5.0";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -85,7 +85,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Logger.LogInformation("[ZombieKnifeMenu] v1.4.1 loaded.");
+        Logger.LogInformation("[ZombieKnifeMenu] v1.5.0 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -123,31 +123,35 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
     {
         var vip = HasVip(player);
 
-        var menu = new CS2ScreenMenuAPI.Menu(player, this)
+        // Native CounterStrikeSharp menu: no external menu DLL, so it stays
+        // compatible with the exact CounterStrikeSharp version running the server.
+        var menu = new ChatMenu("Knife Menu")
         {
-            Title = "Knife Menu",
-            HasExitButon = true,
-            ShowDisabledOptionNum = true
+            ExitButton = true
         };
 
-
-        menu.AddItem(BuildLabel(player, KnifeType.Speed, "Speed Knife"),
+        menu.AddMenuOption(
+            BuildLabel(player, KnifeType.Speed, "Speed Knife"),
             (p, _) => SelectKnife(p, KnifeType.Speed));
 
-        menu.AddItem(BuildLabel(player, KnifeType.Gravity, "Gravity Knife"),
+        menu.AddMenuOption(
+            BuildLabel(player, KnifeType.Gravity, "Gravity Knife"),
             (p, _) => SelectKnife(p, KnifeType.Gravity));
 
-        menu.AddItem(BuildLabel(player, KnifeType.Knockback, "Knockback Knife"),
+        menu.AddMenuOption(
+            BuildLabel(player, KnifeType.Knockback, "Knockback Knife"),
             (p, _) => SelectKnife(p, KnifeType.Knockback));
 
-        menu.AddItem(BuildLabel(player, KnifeType.Damage, "Damage Knife"),
+        menu.AddMenuOption(
+            BuildLabel(player, KnifeType.Damage, "Damage Knife"),
             (p, _) => SelectKnife(p, KnifeType.Damage));
 
-        menu.AddItem(BuildLabel(player, KnifeType.Vip, "VIP Knife"),
+        menu.AddMenuOption(
+            BuildLabel(player, KnifeType.Vip, vip ? "VIP Knife" : "VIP Knife [VIP ONLY]"),
             (p, _) => SelectKnife(p, KnifeType.Vip),
-            !vip);
+            disabled: !vip);
 
-        menu.Display();
+        MenuManager.OpenChatMenu(player, menu);
     }
 
     private string BuildLabel(CCSPlayerController player, KnifeType type, string name)

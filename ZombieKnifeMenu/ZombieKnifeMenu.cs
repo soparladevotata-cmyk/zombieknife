@@ -1,25 +1,28 @@
 using Microsoft.Extensions.Logging;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
+using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Entities.Constants;
-using CounterStrikeSharp.API.Modules.Menu;
 using CounterStrikeSharp.API.Modules.Memory;
 using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.Utils;
+using CS2ScreenMenuAPI;
+using CS2ScreenMenuAPI.Enums;
 
 namespace ZombieKnifeMenu;
 
 public enum KnifeType
 {
-    Classic = 0,
     Speed = 1,
     Gravity = 2,
     Knockback = 3,
-    Damage = 4
+    Damage = 4,
+    Vip = 5
 }
 
 public sealed class KnifeSettings
@@ -30,24 +33,48 @@ public sealed class KnifeSettings
     public float KnockbackVertical { get; set; } = 170.0f;
     public float DamageMultiplier { get; set; } = 1.50f;
 
-    // Zombie:Reborn default layout: Humans = CT (3), Zombies = T (2)
+    // Zombie:Reborn defaults: humans are CT, zombies are T.
     public byte HumanTeam { get; set; } = 3;
     public byte ZombieTeam { get; set; } = 2;
 
-    // How often movement effects are refreshed. 4 = every 4 server ticks.
     public int RefreshEveryTicks { get; set; } = 4;
+
+    // VIP Knife requires this permission. @css/root is accepted too.
+    public string VipPermission { get; set; } = "@css/vip";
+
+    // Custom CS2 server-side weapon models supplied by the user.
+    // Runtime path uses .vmdl even though the physical compiled file is .vmdl_c.
+    public string SpeedKnifeModel { get; set; } =
+        "weapons/nozb1/knife/switch_feather/switch_feather.vmdl";
+
+    public string GravityKnifeModel { get; set; } =
+        "weapons/nozb1/knife/morrowind/morrowind.vmdl";
+
+    public string KnockbackKnifeModel { get; set; } =
+        "weapons/nozb1/knife/cudgel/cudgel.vmdl";
+
+    public string DamageKnifeModel { get; set; } =
+        "weapons/nozb1/knife/blaine_spineedge/blaine_spineedge.vmdl";
+
+    public string VipKnifeModel { get; set; } =
+        "weapons/nozb1/knife/baseball_batlow/baseball_batlow.vmdl";
 }
 
 [MinimumApiVersion(80)]
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "1.1.0";
+    public override string ModuleVersion => "1.3.0";
     public override string ModuleAuthor => "OpenAI";
-    public override string ModuleDescription => "CS 1.6-style knife bonuses for Zombie:Reborn / CounterStrikeSharp";
+    public override string ModuleDescription =>
+        "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
 
     private KnifeSettings _settings = new();
     private readonly Dictionary<string, KnifeType> _selections = new();
+
+    // Remember stock models so we can stop touching Zombie:Reborn's zombie knife.
+    private readonly Dictionary<string, string> _originalViewModels = new();
+    private readonly Dictionary<string, string> _originalWorldModels = new();
 
     private string SettingsPath => Path.Combine(ModuleDirectory, "config.json");
     private string SelectionsPath => Path.Combine(ModuleDirectory, "knife_selections.json");
@@ -58,30 +85,33 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         LoadSettings();
         LoadSelections();
 
-        AddCommand("css_knives", "Open the zombie knife menu", OnKnifeCommand);
+        AddCommand("css_knives", "Open Knife Menu", OnKnifeCommand);
 
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
+        RegisterEventHandler<EventPlayerTeam>(OnPlayerTeam);
+        RegisterEventHandler<EventItemEquip>(OnItemEquip);
+
         RegisterListener<Listeners.OnEntityTakeDamagePre>(OnEntityTakeDamagePre);
         RegisterListener<Listeners.OnEntityTakeDamagePost>(OnEntityTakeDamagePost);
 
-        var tickRate = Math.Max(1, _settings.RefreshEveryTicks);
-        AddTickTimer(tickRate, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+        var ticks = Math.Max(1, _settings.RefreshEveryTicks);
+        AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Logger.LogInformation("[ZombieKnifeMenu] Loaded. Use !knife or !knives.");
+        Logger.LogInformation("[ZombieKnifeMenu] v1.3.0 loaded.");
     }
 
     public override void Unload(bool hotReload)
     {
         SaveSelections();
 
-        // Clean up movement modifiers on unload.
         foreach (var player in Utilities.GetPlayers())
         {
             ResetMovement(player);
+            ResetKnifeModel(player);
         }
     }
 
-    [ConsoleCommand("css_knife", "Open the zombie knife menu")]
+    [ConsoleCommand("css_knife", "Open Knife Menu")]
     [CommandHelper(whoCanExecute: CommandUsage.CLIENT_ONLY)]
     public void OnKnifeCommand(CCSPlayerController? player, CommandInfo command)
     {
@@ -91,7 +121,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         OpenKnifeMenu(player!);
     }
 
-    [ConsoleCommand("css_cutite", "Deschide meniul de cutite")]
+    [ConsoleCommand("css_cutite", "Open Knife Menu")]
     [CommandHelper(whoCanExecute: CommandUsage.CLIENT_ONLY)]
     public void OnCutiteCommand(CCSPlayerController? player, CommandInfo command)
     {
@@ -103,61 +133,96 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
     private void OpenKnifeMenu(CCSPlayerController player)
     {
-        var selected = GetSelection(player);
+        var vip = HasVip(player);
 
-        player.PrintToChat(" \x10==============================");
-        player.PrintToChat(" \x04      ZOMBIE KNIFE MENU");
-        player.PrintToChat(" \x10==============================");
-        player.PrintToChat(" \x01Alege cutitul dorit. Bonusul se aplica");
-        player.PrintToChat(" \x01doar cand esti HUMAN si ai cutitul in mana.");
-
-        var menu = new ChatMenu("★ ZOMBIE KNIFE MENU ★")
+        var menu = new CS2ScreenMenuAPI.Menu(player, this)
         {
-            ExitButton = true
+            Title = "Knife Menu",
+            HasExitButon = true,
+            ShowDisabledOptionNum = true
         };
 
-        menu.AddMenuOption(
-            FormatOption(selected, KnifeType.Speed, "Speed Knife", $"+{(_settings.SpeedMultiplier - 1f) * 100f:0}% SPEED"),
+        menu.SetMenuType(MenuType.KeyPress);
+
+        menu.AddItem(BuildLabel(player, KnifeType.Speed, "Speed Knife"),
             (p, _) => SelectKnife(p, KnifeType.Speed));
 
-        menu.AddMenuOption(
-            FormatOption(selected, KnifeType.Gravity, "Gravity Knife", $"GRAVITY {_settings.GravityScale:0.00}"),
+        menu.AddItem(BuildLabel(player, KnifeType.Gravity, "Gravity Knife"),
             (p, _) => SelectKnife(p, KnifeType.Gravity));
 
-        menu.AddMenuOption(
-            FormatOption(selected, KnifeType.Knockback, "Knockback Knife", "EXTRA KNOCKBACK"),
+        menu.AddItem(BuildLabel(player, KnifeType.Knockback, "Knockback Knife"),
             (p, _) => SelectKnife(p, KnifeType.Knockback));
 
-        menu.AddMenuOption(
-            FormatOption(selected, KnifeType.Damage, "Damage Knife", $"+{(_settings.DamageMultiplier - 1f) * 100f:0}% DAMAGE"),
+        menu.AddItem(BuildLabel(player, KnifeType.Damage, "Damage Knife"),
             (p, _) => SelectKnife(p, KnifeType.Damage));
 
-        menu.AddMenuOption(
-            FormatOption(selected, KnifeType.Classic, "Classic Knife", "FARA BONUS"),
-            (p, _) => SelectKnife(p, KnifeType.Classic));
+        menu.AddItem(BuildLabel(player, KnifeType.Vip, "VIP Knife"),
+            (p, _) => SelectKnife(p, KnifeType.Vip),
+            !vip);
 
-        MenuManager.OpenChatMenu(player, menu);
+        menu.Display();
     }
 
-    private static string FormatOption(KnifeType selected, KnifeType type, string name, string bonus)
-        => selected == type ? $"✓ {name} [{bonus}]" : $"{name} [{bonus}]";
+    private string BuildLabel(CCSPlayerController player, KnifeType type, string name)
+    {
+        return GetSelection(player) == type ? $"{name} [SELECTED]" : name;
+    }
 
     private void SelectKnife(CCSPlayerController player, KnifeType type)
     {
         if (!IsRealPlayer(player))
             return;
 
+        if (type == KnifeType.Vip && !HasVip(player))
+        {
+            player.PrintToChat(" \x02[Knife Menu]\x01 VIP Knife este doar pentru VIP.");
+            return;
+        }
+
         _selections[SteamKey(player)] = type;
         SaveSelections();
 
-        player.PrintToChat($" \x04[KNIFE MENU]\x01 Ai selectat: \x10{KnifeName(type)}\x01.");
-        player.PrintToChat(" \x04[KNIFE]\x01 Bonusul se aplica doar cand esti HUMAN si ai cutitul in mana.");
+        player.PrintToChat($" \x04[Knife Menu]\x01 Ai ales \x10{KnifeName(type)}\x01.");
 
-        // Apply immediately if possible.
-        ApplyMovementToPlayer(player);
+        if (IsAliveHuman(player))
+        {
+            Server.NextFrame(() =>
+            {
+                ApplySelectedKnifeModel(player);
+                ApplyMovementToPlayer(player);
+            });
+        }
     }
 
     private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
+    {
+        var player = @event.Userid;
+        if (!IsRealPlayer(player))
+            return HookResult.Continue;
+
+        AddTimer(0.35f, () =>
+        {
+            if (!IsRealPlayer(player))
+                return;
+
+            ResetMovement(player);
+
+            if (IsAliveHuman(player))
+            {
+                ValidateVipSelection(player);
+                ApplySelectedKnifeModel(player);
+                ApplyMovementToPlayer(player);
+            }
+            else
+            {
+                ResetKnifeModel(player);
+            }
+        }, TimerFlags.STOP_ON_MAPCHANGE);
+
+        return HookResult.Continue;
+    }
+
+    private HookResult OnPlayerTeam(EventPlayerTeam @event, GameEventInfo info)
     {
         var player = @event.Userid;
         if (!IsRealPlayer(player))
@@ -168,51 +233,141 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             if (!IsRealPlayer(player))
                 return;
 
-            ResetMovement(player!);
-            ApplyMovementToPlayer(player!);
+            if (player!.TeamNum == _settings.HumanTeam)
+            {
+                ValidateVipSelection(player);
+                ApplySelectedKnifeModel(player);
+            }
+            else
+            {
+                ResetMovement(player);
+                ResetKnifeModel(player);
+            }
         });
 
         return HookResult.Continue;
     }
 
+    private HookResult OnItemEquip(EventItemEquip @event, GameEventInfo info)
+    {
+        var player = @event.Userid;
+        if (!IsAliveHuman(player))
+            return HookResult.Continue;
+
+        // Let CS2 finish switching the active viewmodel, then replace it.
+        Server.NextFrame(() =>
+        {
+            if (!IsAliveHuman(player))
+                return;
+
+            var active = player!.PlayerPawn.Value?.WeaponServices?.ActiveWeapon.Value;
+            if (active != null && active.IsValid && IsKnife(active))
+                ApplySelectedKnifeModel(player);
+        });
+
+        return HookResult.Continue;
+    }
+
+    private void ApplySelectedKnifeModel(CCSPlayerController player)
+    {
+        if (!IsAliveHuman(player))
+            return;
+
+        ValidateVipSelection(player);
+
+        var knife = GetKnife(player);
+        if (knife == null || !knife.IsValid)
+            return;
+
+        var key = SteamKey(player);
+
+        // Save stock world model only if the current one is not one of our customs.
+        var currentWorld = GetModelPath(knife);
+        if (!string.IsNullOrWhiteSpace(currentWorld) &&
+            !IsCustomKnifeModel(currentWorld) &&
+            !_originalWorldModels.ContainsKey(key))
+        {
+            _originalWorldModels[key] = currentWorld;
+        }
+
+        var viewModel = GetViewModel(player);
+        if (viewModel != null && viewModel.IsValid)
+        {
+            var currentView = viewModel.VMName ?? string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(currentView) &&
+                !IsCustomKnifeModel(currentView) &&
+                !_originalViewModels.ContainsKey(key))
+            {
+                _originalViewModels[key] = currentView;
+            }
+        }
+
+        var model = GetSelectedModel(player);
+
+        // Third-person / world model.
+        knife.SetModel(model);
+
+        // First-person model if the knife is currently held.
+        var active = player.PlayerPawn.Value?.WeaponServices?.ActiveWeapon.Value;
+        if (active != null && active.IsValid && active.Handle == knife.Handle)
+        {
+            SetViewModel(player, model);
+        }
+    }
+
+    private void ResetKnifeModel(CCSPlayerController? player)
+    {
+        if (!IsRealPlayer(player))
+            return;
+
+        var key = SteamKey(player!);
+        var knife = GetKnife(player!);
+
+        if (knife != null && knife.IsValid &&
+            _originalWorldModels.TryGetValue(key, out var worldModel) &&
+            !string.IsNullOrWhiteSpace(worldModel))
+        {
+            knife.SetModel(worldModel);
+        }
+
+        if (_originalViewModels.TryGetValue(key, out var viewModel) &&
+            !string.IsNullOrWhiteSpace(viewModel))
+        {
+            SetViewModel(player!, viewModel);
+        }
+    }
+
     private void ApplyMovementEffects()
     {
         foreach (var player in Utilities.GetPlayers())
-        {
             ApplyMovementToPlayer(player);
-        }
     }
 
     private void ApplyMovementToPlayer(CCSPlayerController? player)
     {
-        if (!IsAlivePlayer(player))
+        if (!IsAliveHuman(player))
             return;
 
         var pawn = player!.PlayerPawn.Value;
         if (pawn == null || !pawn.IsValid)
             return;
 
-        // Only affect humans. This avoids fighting Zombie:Reborn's zombie class movement settings.
-        if (player.TeamNum != _settings.HumanTeam)
-            return;
-
         var selected = GetSelection(player);
         var knifeInHand = IsKnifeInHand(pawn);
 
-        // Defaults while not holding the selected special knife.
         float speed = 1.0f;
         float gravity = 1.0f;
 
         if (knifeInHand)
         {
-            if (selected == KnifeType.Speed)
+            if (selected is KnifeType.Speed or KnifeType.Vip)
                 speed = _settings.SpeedMultiplier;
 
-            if (selected == KnifeType.Gravity)
+            if (selected is KnifeType.Gravity or KnifeType.Vip)
                 gravity = _settings.GravityScale;
         }
 
-        // VelocityModifier is the CS2 pawn speed modifier.
         pawn.VelocityModifier = speed;
         pawn.GravityScale = gravity;
 
@@ -238,23 +393,23 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
     private HookResult OnEntityTakeDamagePre(CBaseEntity entity, CTakeDamageInfo info)
     {
-        if (!TryGetHumanKnifeHit(entity, info, out var attacker, out var victim, out _, out _))
+        if (!TryGetHumanKnifeHit(entity, info, out var attacker, out _, out _, out _))
             return HookResult.Continue;
 
-        if (GetSelection(attacker) == KnifeType.Damage)
-        {
+        var selected = GetSelection(attacker);
+        if (selected is KnifeType.Damage or KnifeType.Vip)
             info.Damage *= _settings.DamageMultiplier;
-        }
 
         return HookResult.Continue;
     }
 
     private void OnEntityTakeDamagePost(CBaseEntity entity, CTakeDamageInfo info, CTakeDamageResult result)
     {
-        if (!TryGetHumanKnifeHit(entity, info, out var attacker, out var victim, out var attackerPawn, out var victimPawn))
+        if (!TryGetHumanKnifeHit(entity, info, out var attacker, out _, out var attackerPawn, out var victimPawn))
             return;
 
-        if (GetSelection(attacker) != KnifeType.Knockback)
+        var selected = GetSelection(attacker);
+        if (selected is not (KnifeType.Knockback or KnifeType.Vip))
             return;
 
         var aPos = attackerPawn.AbsOrigin;
@@ -283,7 +438,6 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             MathF.Max(oldVel.Z, 0f) + _settings.KnockbackVertical
         );
 
-        // No-position teleport: only applies velocity.
         victimPawn.Teleport(null, null, newVel);
     }
 
@@ -303,7 +457,6 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (victimEntity == null || !victimEntity.IsValid || !victimEntity.IsPlayerPawn())
             return false;
 
-        // Knife damage is slash damage. This catches normal knife, bayonet, karambit, etc.
         if ((info.BitsDamageType & DamageTypes_t.DMG_SLASH) == 0)
             return false;
 
@@ -314,7 +467,8 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         attackerPawn = attackerEntity.As<CCSPlayerPawn>();
         victimPawn = victimEntity.As<CCSPlayerPawn>();
 
-        if (attackerPawn == null || victimPawn == null || !attackerPawn.IsValid || !victimPawn.IsValid)
+        if (attackerPawn == null || victimPawn == null ||
+            !attackerPawn.IsValid || !victimPawn.IsValid)
             return false;
 
         var attackerController = attackerPawn.Controller.Value;
@@ -330,32 +484,55 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (!IsRealPlayer(attacker) || !IsRealPlayer(victim) || attacker == victim)
             return false;
 
-        // Humans stab zombies only.
-        if (attacker.TeamNum != _settings.HumanTeam || victim.TeamNum != _settings.ZombieTeam)
-            return false;
-
-        return true;
+        return attacker.TeamNum == _settings.HumanTeam &&
+               victim.TeamNum == _settings.ZombieTeam;
     }
 
-    private static bool IsKnifeInHand(CCSPlayerPawn pawn)
+    private bool HasVip(CCSPlayerController player)
     {
-        var weapon = pawn.WeaponServices?.ActiveWeapon.Value;
-        if (weapon == null || !weapon.IsValid)
-            return false;
+        if (string.IsNullOrWhiteSpace(_settings.VipPermission))
+            return true;
 
-        var name = weapon.DesignerName ?? string.Empty;
-        return name.Contains("knife", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("bayonet", StringComparison.OrdinalIgnoreCase);
+        return AdminManager.PlayerHasPermissions(player, _settings.VipPermission) ||
+               AdminManager.PlayerHasPermissions(player, "@css/root");
+    }
+
+    private void ValidateVipSelection(CCSPlayerController player)
+    {
+        if (GetSelection(player) == KnifeType.Vip && !HasVip(player))
+        {
+            _selections[SteamKey(player)] = KnifeType.Speed;
+            SaveSelections();
+        }
     }
 
     private KnifeType GetSelection(CCSPlayerController player)
     {
         var key = SteamKey(player);
-        return _selections.TryGetValue(key, out var type) ? type : KnifeType.Classic;
+        return _selections.TryGetValue(key, out var type) ? type : KnifeType.Speed;
     }
 
-    private static string SteamKey(CCSPlayerController player)
-        => player.SteamID.ToString();
+    private string GetSelectedModel(CCSPlayerController player)
+    {
+        return GetSelection(player) switch
+        {
+            KnifeType.Speed => _settings.SpeedKnifeModel,
+            KnifeType.Gravity => _settings.GravityKnifeModel,
+            KnifeType.Knockback => _settings.KnockbackKnifeModel,
+            KnifeType.Damage => _settings.DamageKnifeModel,
+            KnifeType.Vip => _settings.VipKnifeModel,
+            _ => _settings.SpeedKnifeModel
+        };
+    }
+
+    private bool IsCustomKnifeModel(string model)
+    {
+        return string.Equals(model, _settings.SpeedKnifeModel, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(model, _settings.GravityKnifeModel, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(model, _settings.KnockbackKnifeModel, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(model, _settings.DamageKnifeModel, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(model, _settings.VipKnifeModel, StringComparison.OrdinalIgnoreCase);
+    }
 
     private static string KnifeName(KnifeType type) => type switch
     {
@@ -363,8 +540,72 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         KnifeType.Gravity => "Gravity Knife",
         KnifeType.Knockback => "Knockback Knife",
         KnifeType.Damage => "Damage Knife",
-        _ => "Classic Knife"
+        KnifeType.Vip => "VIP Knife",
+        _ => "Speed Knife"
     };
+
+    private static CBasePlayerWeapon? GetKnife(CCSPlayerController player)
+    {
+        var weaponServices = player.PlayerPawn.Value?.WeaponServices;
+        if (weaponServices == null)
+            return null;
+
+        foreach (var handle in weaponServices.MyWeapons)
+        {
+            var weapon = handle.Value;
+            if (weapon != null && weapon.IsValid && IsKnife(weapon))
+                return weapon;
+        }
+
+        return null;
+    }
+
+    private static bool IsKnife(CBasePlayerWeapon weapon)
+    {
+        var name = weapon.DesignerName ?? string.Empty;
+        return name.Contains("knife", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("bayonet", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsKnifeInHand(CCSPlayerPawn pawn)
+    {
+        var weapon = pawn.WeaponServices?.ActiveWeapon.Value;
+        return weapon != null && weapon.IsValid && IsKnife(weapon);
+    }
+
+    private static string GetModelPath(CBaseModelEntity entity)
+    {
+        return entity.CBodyComponent?.SceneNode?.GetSkeletonInstance()?.ModelState?.ModelName ?? string.Empty;
+    }
+
+    private static unsafe CBaseViewModel? GetViewModel(CCSPlayerController player)
+    {
+        nint? handle = player.PlayerPawn.Value?.ViewModelServices?.Handle;
+        if (handle == null || !handle.HasValue)
+            return null;
+
+        var services = new CCSPlayer_ViewModelServices(handle.Value);
+        nint ptr = services.Handle + Schema.GetSchemaOffset(
+            "CCSPlayer_ViewModelServices", "m_hViewModel");
+
+        Span<nint> viewModels = MemoryMarshal.CreateSpan(ref ptr, 3);
+        var viewModel = new CHandle<CBaseViewModel>(viewModels[0]);
+
+        return viewModel.Value;
+    }
+
+    private static void SetViewModel(CCSPlayerController player, string model)
+    {
+        var viewModel = GetViewModel(player);
+        if (viewModel != null && viewModel.IsValid)
+            viewModel.SetModel(model);
+    }
+
+    private static string SteamKey(CCSPlayerController player)
+        => player.SteamID.ToString();
+
+    private bool IsAliveHuman(CCSPlayerController? player)
+        => IsAlivePlayer(player) && player!.TeamNum == _settings.HumanTeam;
 
     private static bool IsRealPlayer(CCSPlayerController? player)
         => player != null && player.IsValid && !player.IsBot && !player.IsHLTV;
@@ -385,17 +626,21 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             if (!File.Exists(SettingsPath))
             {
                 File.WriteAllText(SettingsPath,
-                    JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true }));
+                    JsonSerializer.Serialize(_settings,
+                        new JsonSerializerOptions { WriteIndented = true }));
                 return;
             }
 
-            var loaded = JsonSerializer.Deserialize<KnifeSettings>(File.ReadAllText(SettingsPath));
+            var loaded = JsonSerializer.Deserialize<KnifeSettings>(
+                File.ReadAllText(SettingsPath));
+
             if (loaded != null)
                 _settings = loaded;
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "[ZombieKnifeMenu] Failed to load config.json; using defaults.");
+            Logger.LogError(ex,
+                "[ZombieKnifeMenu] Failed to load config.json; using defaults.");
         }
     }
 
@@ -406,11 +651,14 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             if (!File.Exists(SelectionsPath))
                 return;
 
-            var raw = JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(SelectionsPath));
+            var raw = JsonSerializer.Deserialize<Dictionary<string, int>>(
+                File.ReadAllText(SelectionsPath));
+
             if (raw == null)
                 return;
 
             _selections.Clear();
+
             foreach (var pair in raw)
             {
                 if (Enum.IsDefined(typeof(KnifeType), pair.Value))
@@ -419,7 +667,8 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "[ZombieKnifeMenu] Failed to load knife selections.");
+            Logger.LogError(ex,
+                "[ZombieKnifeMenu] Failed to load knife selections.");
         }
     }
 
@@ -428,12 +677,15 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         try
         {
             var raw = _selections.ToDictionary(x => x.Key, x => (int)x.Value);
+
             File.WriteAllText(SelectionsPath,
-                JsonSerializer.Serialize(raw, new JsonSerializerOptions { WriteIndented = true }));
+                JsonSerializer.Serialize(raw,
+                    new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "[ZombieKnifeMenu] Failed to save knife selections.");
+            Logger.LogError(ex,
+                "[ZombieKnifeMenu] Failed to save knife selections.");
         }
     }
 }

@@ -4,13 +4,16 @@ using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
+using CounterStrikeSharp.API.Core.Capabilities;
 using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Entities.Constants;
 using CounterStrikeSharp.API.Modules.Memory;
-using CounterStrikeSharp.API.Modules.Menu;
 using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.Utils;
+using CS2_GameHUDAPI;
+using DrawingColor = System.Drawing.Color;
+using NumericsVector3 = System.Numerics.Vector3;
 
 namespace ZombieKnifeMenu;
 
@@ -50,69 +53,32 @@ public sealed class KnifeSettings
 
     // Base CT knife subclass used when reverting.
     public string DefaultKnifeSubclass { get; set; } = "weapon_knife";
+
+    // On-screen Knife Menu (CS2-GameHUD)
+    public byte MenuHudChannel { get; set; } = 241;
+    public float MenuHudX { get; set; } = -2.8f;
+    public float MenuHudY { get; set; } = 1.45f;
+    public float MenuHudDistance { get; set; } = 7.0f;
+    public int MenuHudFontSize { get; set; } = 30;
+    public float MenuHudWorldUnitsPerPixel { get; set; } = 0.0105f;
+    public float MenuHudBackgroundHeight { get; set; } = 0.35f;
+    public float MenuHudBackgroundWidth { get; set; } = 0.55f;
 }
 
-
-public sealed class ClassicKnifeMenu : BaseMenu
-{
-    public ClassicKnifeMenu(string title) : base(title)
-    {
-        ExitButton = true;
-        PostSelectAction = PostSelectAction.Close;
-    }
-
-    public override void Open(CCSPlayerController player)
-    {
-        MenuManager.CloseActiveMenu(player);
-
-        var instance = new ClassicKnifeMenuInstance(player, this);
-        MenuManager.GetActiveMenus()[player.Handle] = instance;
-        instance.Display();
-    }
-}
-
-public sealed class ClassicKnifeMenuInstance : BaseMenuInstance
-{
-    public override int NumPerPage => 5;
-
-    public ClassicKnifeMenuInstance(CCSPlayerController player, ClassicKnifeMenu menu)
-        : base(player, menu)
-    {
-    }
-
-    public override void Display()
-    {
-        if (Menu is not ClassicKnifeMenu menu)
-            return;
-
-        Player.PrintToChat($" {ChatColors.Gold}{menu.Title}");
-        Player.PrintToChat(" ");
-
-        int key = 1;
-
-        foreach (var option in menu.MenuOptions.Take(5))
-        {
-            var color = option.Disabled ? ChatColors.Grey : ChatColors.Green;
-            Player.PrintToChat($" {color}{key}. {ChatColors.Default}{option.Text}");
-            key++;
-        }
-
-        Player.PrintToChat(" ");
-        Player.PrintToChat($" {ChatColors.Red}9. {ChatColors.Default}Close");
-    }
-}
 
 [MinimumApiVersion(80)]
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "1.6.0";
+    public override string ModuleVersion => "1.8.0";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
 
     private KnifeSettings _settings = new();
     private readonly Dictionary<string, KnifeType> _selections = new();
+    private readonly HashSet<ulong> _openKnifeMenus = new();
+    private IGameHUDAPI? _gameHud;
 
     private string SettingsPath => Path.Combine(ModuleDirectory, "config.json");
     private string SelectionsPath => Path.Combine(ModuleDirectory, "knife_selections.json");
@@ -125,7 +91,16 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         AddCommand("css_knives", "Open Knife Menu", OnKnifeCommand);
 
+        // Intercept the normal CS2 number-key slot commands only while the menu is open.
+        AddCommandListener("slot1", (p, c) => HandleMenuKey(p, 1));
+        AddCommandListener("slot2", (p, c) => HandleMenuKey(p, 2));
+        AddCommandListener("slot3", (p, c) => HandleMenuKey(p, 3));
+        AddCommandListener("slot4", (p, c) => HandleMenuKey(p, 4));
+        AddCommandListener("slot5", (p, c) => HandleMenuKey(p, 5));
+        AddCommandListener("slot9", (p, c) => HandleMenuKey(p, 9));
+
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
+        RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
         RegisterEventHandler<EventPlayerTeam>(OnPlayerTeam);
         RegisterEventHandler<EventItemEquip>(OnItemEquip);
 
@@ -135,7 +110,17 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Logger.LogInformation("[ZombieKnifeMenu] v1.6.0 loaded.");
+        Logger.LogInformation("[ZombieKnifeMenu] v1.8.0 loaded.");
+    }
+
+    public override void OnAllPluginsLoaded(bool hotReload)
+    {
+        _gameHud = IGameHUDAPI.Capability.Get();
+
+        if (_gameHud == null)
+            Logger.LogError("[ZombieKnifeMenu] CS2-GameHUD API not found. Install CS2-GameHUD + its shared API.");
+        else
+            Logger.LogInformation("[ZombieKnifeMenu] CS2-GameHUD API connected.");
     }
 
     public override void Unload(bool hotReload)
@@ -144,9 +129,12 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         foreach (var player in Utilities.GetPlayers())
         {
+            CloseKnifeMenu(player);
             ResetMovement(player);
             ResetKnifeSubclass(player);
         }
+
+        _openKnifeMenus.Clear();
     }
 
     [ConsoleCommand("css_knife", "Open Knife Menu")]
@@ -157,6 +145,26 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             return;
 
         OpenKnifeMenu(player!);
+    }
+
+    [ConsoleCommand("css_kniferefresh", "Re-apply selected custom knife model")]
+    [CommandHelper(whoCanExecute: CommandUsage.CLIENT_ONLY)]
+    public void OnKnifeRefreshCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!IsAliveHuman(player))
+            return;
+
+        ApplySelectedKnifeSubclass(player!);
+
+        try
+        {
+            player!.ExecuteClientCommand("slot3");
+        }
+        catch
+        {
+        }
+
+        player!.PrintToChat(" \x04[Knife Menu]\x01 Modelul selectat a fost reaplicat.");
     }
 
     [ConsoleCommand("css_cutite", "Open Knife Menu")]
@@ -171,37 +179,109 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
     private void OpenKnifeMenu(CCSPlayerController player)
     {
-        var vip = HasVip(player);
+        if (_gameHud == null)
+        {
+            player.PrintToChat(" \x02[Knife Menu]\x01 CS2-GameHUD nu este incarcat pe server.");
+            return;
+        }
 
-        var menu = new ClassicKnifeMenu("Knife Menu");
+        _gameHud.Native_GameHUD_SetParams(
+            player,
+            _settings.MenuHudChannel,
+            new NumericsVector3(
+                _settings.MenuHudX,
+                _settings.MenuHudY,
+                _settings.MenuHudDistance),
+            DrawingColor.FromArgb(245, 232, 190),
+            _settings.MenuHudFontSize,
+            "Verdana",
+            _settings.MenuHudWorldUnitsPerPixel,
+            PointWorldTextJustifyHorizontal_t.POINT_WORLD_TEXT_JUSTIFY_HORIZONTAL_LEFT,
+            PointWorldTextJustifyVertical_t.POINT_WORLD_TEXT_JUSTIFY_VERTICAL_TOP,
+            PointWorldTextReorientMode_t.POINT_WORLD_TEXT_REORIENT_NONE,
+            _settings.MenuHudBackgroundHeight,
+            _settings.MenuHudBackgroundWidth);
 
-        menu.AddMenuOption(
-            BuildLabel(player, KnifeType.Speed, "Speed Knife"),
-            (p, _) => SelectKnife(p, KnifeType.Speed));
+        _gameHud.Native_GameHUD_ShowPermanent(
+            player,
+            _settings.MenuHudChannel,
+            BuildKnifeMenuText(player));
 
-        menu.AddMenuOption(
-            BuildLabel(player, KnifeType.Gravity, "Gravity Knife"),
-            (p, _) => SelectKnife(p, KnifeType.Gravity));
-
-        menu.AddMenuOption(
-            BuildLabel(player, KnifeType.Knockback, "Knockback Knife"),
-            (p, _) => SelectKnife(p, KnifeType.Knockback));
-
-        menu.AddMenuOption(
-            BuildLabel(player, KnifeType.Damage, "Damage Knife"),
-            (p, _) => SelectKnife(p, KnifeType.Damage));
-
-        menu.AddMenuOption(
-            BuildLabel(player, KnifeType.Vip, vip ? "VIP Knife" : "VIP Knife [VIP ONLY]"),
-            (p, _) => SelectKnife(p, KnifeType.Vip),
-            disabled: !vip);
-
-        menu.Open(player);
+        _openKnifeMenus.Add(player.SteamID);
     }
 
-    private string BuildLabel(CCSPlayerController player, KnifeType type, string name)
+    private string BuildKnifeMenuText(CCSPlayerController player)
     {
-        return GetSelection(player) == type ? $"{name} [SELECTED]" : name;
+        var selected = GetSelection(player);
+        var vipText = HasVip(player) ? "VIP Knife" : "VIP Knife [VIP ONLY]";
+
+        string Mark(KnifeType type) => selected == type ? "  <" : "";
+
+        return
+            "Knife Menu\n\n" +
+            $"1. Speed Knife{Mark(KnifeType.Speed)}\n" +
+            $"2. Gravity Knife{Mark(KnifeType.Gravity)}\n" +
+            $"3. Knockback Knife{Mark(KnifeType.Knockback)}\n" +
+            $"4. Damage Knife{Mark(KnifeType.Damage)}\n" +
+            $"5. {vipText}{Mark(KnifeType.Vip)}\n\n" +
+            "9. Close";
+    }
+
+    private HookResult HandleMenuKey(CCSPlayerController? player, int key)
+    {
+        if (!IsRealPlayer(player) || !_openKnifeMenus.Contains(player!.SteamID))
+            return HookResult.Continue;
+
+        var validPlayer = player!;
+
+        if (key == 9)
+        {
+            CloseKnifeMenu(validPlayer);
+            return HookResult.Handled;
+        }
+
+        KnifeType type = key switch
+        {
+            1 => KnifeType.Speed,
+            2 => KnifeType.Gravity,
+            3 => KnifeType.Knockback,
+            4 => KnifeType.Damage,
+            5 => KnifeType.Vip,
+            _ => 0
+        };
+
+        if (type == 0)
+            return HookResult.Handled;
+
+        if (type == KnifeType.Vip && !HasVip(validPlayer))
+        {
+            validPlayer.PrintToChat(" \x02[Knife Menu]\x01 VIP Knife este doar pentru VIP.");
+            OpenKnifeMenu(validPlayer);
+            return HookResult.Handled;
+        }
+
+        SelectKnife(validPlayer, type);
+        CloseKnifeMenu(validPlayer);
+        return HookResult.Handled;
+    }
+
+    private void CloseKnifeMenu(CCSPlayerController? player)
+    {
+        if (!IsRealPlayer(player))
+            return;
+
+        if (_gameHud != null)
+        {
+            try
+            {
+                _gameHud.Native_GameHUD_Remove(player!, _settings.MenuHudChannel);
+            }
+            catch
+            {
+            }
+        }
+
+        _openKnifeMenus.Remove(player!.SteamID);
     }
 
     private void SelectKnife(CCSPlayerController player, KnifeType type)
@@ -224,10 +304,43 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         {
             Server.NextFrame(() =>
             {
+                // Apply the selected VData subclass immediately.
                 ApplySelectedKnifeSubclass(player);
                 ApplyMovementToPlayer(player);
+
+                // Pull the knife out so the client refreshes the first-person model.
+                try
+                {
+                    player.ExecuteClientCommand("slot3");
+                }
+                catch
+                {
+                }
             });
+
+            // Re-apply shortly afterwards because Zombie:Reborn / inventory code can
+            // touch the weapon entity on the next few frames.
+            AddTimer(0.20f, () =>
+            {
+                if (IsAliveHuman(player))
+                    ApplySelectedKnifeSubclass(player);
+            }, TimerFlags.STOP_ON_MAPCHANGE);
+
+            AddTimer(0.60f, () =>
+            {
+                if (IsAliveHuman(player))
+                    ApplySelectedKnifeSubclass(player);
+            }, TimerFlags.STOP_ON_MAPCHANGE);
         }
+    }
+
+    private HookResult OnPlayerDisconnect(EventPlayerDisconnect @event, GameEventInfo info)
+    {
+        var player = @event.Userid;
+        if (player != null)
+            _openKnifeMenus.Remove(player.SteamID);
+
+        return HookResult.Continue;
     }
 
     private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
@@ -253,6 +366,12 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             {
                 ResetKnifeSubclass(player);
             }
+        }, TimerFlags.STOP_ON_MAPCHANGE);
+
+        AddTimer(1.00f, () =>
+        {
+            if (IsAliveHuman(player))
+                ApplySelectedKnifeSubclass(player!);
         }, TimerFlags.STOP_ON_MAPCHANGE);
 
         return HookResult.Continue;
@@ -315,13 +434,36 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         var knife = GetKnife(player);
         if (knife == null || !knife.IsValid)
+        {
+            Logger.LogDebug("[ZombieKnifeMenu] Knife entity not ready for {Player}.", player.PlayerName);
             return;
+        }
 
         var subclass = GetSelectedSubclass(player);
 
-        // Current CS2 custom weapon flow: change the weapon's VData subclass.
-        // The subclass itself points m_szModel_AG2 at the custom .vmdl.
-        knife.AcceptInput("ChangeSubclass", value: subclass);
+        try
+        {
+            // The Workshop addon defines these subclasses in scripts/weapons.vdata_c.
+            // ChangeSubclass makes the existing weapon_knife use the selected custom VData.
+            knife.AcceptInput(
+                "ChangeSubclass",
+                activator: player.PlayerPawn.Value,
+                caller: player.PlayerPawn.Value,
+                value: subclass);
+
+            Logger.LogInformation(
+                "[ZombieKnifeMenu] Applied {Subclass} to {Player}.",
+                subclass,
+                player.PlayerName);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(
+                ex,
+                "[ZombieKnifeMenu] Failed to apply subclass {Subclass} to {Player}.",
+                subclass,
+                player.PlayerName);
+        }
     }
 
     private void ResetKnifeSubclass(CCSPlayerController? player)

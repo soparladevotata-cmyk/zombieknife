@@ -42,7 +42,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "1.0.0";
+    public override string ModuleVersion => "1.1.0";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription => "CS 1.6-style knife bonuses for Zombie:Reborn / CounterStrikeSharp";
 
@@ -91,9 +91,25 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         OpenKnifeMenu(player!);
     }
 
+    [ConsoleCommand("css_cutite", "Deschide meniul de cutite")]
+    [CommandHelper(whoCanExecute: CommandUsage.CLIENT_ONLY)]
+    public void OnCutiteCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!IsRealPlayer(player))
+            return;
+
+        OpenKnifeMenu(player!);
+    }
+
     private void OpenKnifeMenu(CCSPlayerController player)
     {
         var selected = GetSelection(player);
+
+        player.PrintToChat(" \x10==============================");
+        player.PrintToChat(" \x04      ZOMBIE KNIFE MENU");
+        player.PrintToChat(" \x10==============================");
+        player.PrintToChat(" \x01Alege cutitul dorit. Bonusul se aplica");
+        player.PrintToChat(" \x01doar cand esti HUMAN si ai cutitul in mana.");
 
         var menu = new ChatMenu("★ ZOMBIE KNIFE MENU ★")
         {
@@ -101,24 +117,24 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         };
 
         menu.AddMenuOption(
-            FormatOption(selected, KnifeType.Classic, "Classic Knife", "fara bonus"),
-            (p, _) => SelectKnife(p, KnifeType.Classic));
-
-        menu.AddMenuOption(
-            FormatOption(selected, KnifeType.Speed, "Speed Knife", $"+{(_settings.SpeedMultiplier - 1f) * 100f:0}% viteza"),
+            FormatOption(selected, KnifeType.Speed, "Speed Knife", $"+{(_settings.SpeedMultiplier - 1f) * 100f:0}% SPEED"),
             (p, _) => SelectKnife(p, KnifeType.Speed));
 
         menu.AddMenuOption(
-            FormatOption(selected, KnifeType.Gravity, "Gravity Knife", $"gravity {_settings.GravityScale:0.00}"),
+            FormatOption(selected, KnifeType.Gravity, "Gravity Knife", $"GRAVITY {_settings.GravityScale:0.00}"),
             (p, _) => SelectKnife(p, KnifeType.Gravity));
 
         menu.AddMenuOption(
-            FormatOption(selected, KnifeType.Knockback, "Knockback Knife", "impinge zombie-ul mai tare"),
+            FormatOption(selected, KnifeType.Knockback, "Knockback Knife", "EXTRA KNOCKBACK"),
             (p, _) => SelectKnife(p, KnifeType.Knockback));
 
         menu.AddMenuOption(
-            FormatOption(selected, KnifeType.Damage, "Damage Knife", $"+{(_settings.DamageMultiplier - 1f) * 100f:0}% damage"),
+            FormatOption(selected, KnifeType.Damage, "Damage Knife", $"+{(_settings.DamageMultiplier - 1f) * 100f:0}% DAMAGE"),
             (p, _) => SelectKnife(p, KnifeType.Damage));
+
+        menu.AddMenuOption(
+            FormatOption(selected, KnifeType.Classic, "Classic Knife", "FARA BONUS"),
+            (p, _) => SelectKnife(p, KnifeType.Classic));
 
         MenuManager.OpenChatMenu(player, menu);
     }
@@ -134,7 +150,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         _selections[SteamKey(player)] = type;
         SaveSelections();
 
-        player.PrintToChat($" \x04[KNIFE]\x01 Ai ales: \x10{KnifeName(type)}\x01.");
+        player.PrintToChat($" \x04[KNIFE MENU]\x01 Ai selectat: \x10{KnifeName(type)}\x01.");
         player.PrintToChat(" \x04[KNIFE]\x01 Bonusul se aplica doar cand esti HUMAN si ai cutitul in mana.");
 
         // Apply immediately if possible.

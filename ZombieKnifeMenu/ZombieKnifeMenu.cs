@@ -1,4 +1,4 @@
-using System.Text.Json;
+
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
@@ -65,7 +65,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "1.9.2";
+    public override string ModuleVersion => "1.9.3";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -104,7 +104,13 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v1.9.2 loaded.");
+        // CS2/Zombie plugins can overwrite the center HUD very quickly.
+        // Redraw the knife menu while it is open so it stays visible until
+        // the player selects an option or presses 9.
+        AddTimer(0.35f, RefreshOpenKnifeMenus,
+            TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+
+        Console.WriteLine("[ZombieKnifeMenu] v1.9.3 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -151,6 +157,28 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         player!.PrintToChat(" \x04[Knife Menu]\x01 Modelul selectat a fost reaplicat.");
     }
 
+    [ConsoleCommand("css_knifedebug", "Show current knife-menu/model state")]
+    [CommandHelper(whoCanExecute: CommandUsage.CLIENT_ONLY)]
+    public void OnKnifeDebugCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!IsRealPlayer(player))
+            return;
+
+        var validPlayer = player!;
+        var selected = GetSelection(validPlayer);
+        var subclass = GetSelectedSubclass(validPlayer);
+        var knife = GetKnife(validPlayer);
+        var entityName = knife != null && knife.IsValid ? knife.DesignerName : "NONE";
+        var human = IsAliveHuman(validPlayer);
+
+        var msg =
+            $"selected={KnifeName(selected)} | subclass={subclass} | " +
+            $"team={validPlayer.TeamNum} | human={human} | knifeEntity={entityName}";
+
+        validPlayer.PrintToChat($" \x04[Knife Debug]\x01 {msg}");
+        Console.WriteLine($"[ZombieKnifeMenu DEBUG] {validPlayer.PlayerName}: {msg}");
+    }
+
     [ConsoleCommand("css_cutite", "Open Knife Menu")]
     [CommandHelper(whoCanExecute: CommandUsage.CLIENT_ONLY)]
     public void OnCutiteCommand(CCSPlayerController? player, CommandInfo command)
@@ -167,7 +195,32 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         // CounterStrikeSharp native on-screen HTML HUD.
         // No CS2ScreenMenuAPI / CS2-GameHUD dependency.
-        player.PrintToCenterHtml(BuildKnifeMenuHtml(player), 30);
+        player.PrintToCenterHtml(BuildKnifeMenuHtml(player), 2);
+    }
+
+    private void RefreshOpenKnifeMenus()
+    {
+        if (_openKnifeMenus.Count == 0)
+            return;
+
+        foreach (var player in Utilities.GetPlayers())
+        {
+            if (!IsRealPlayer(player))
+                continue;
+
+            if (!_openKnifeMenus.Contains(player.SteamID))
+                continue;
+
+            try
+            {
+                player.PrintToCenterHtml(BuildKnifeMenuHtml(player), 2);
+            }
+            catch
+            {
+                // Player may have disconnected between enumeration and draw.
+                _openKnifeMenus.Remove(player.SteamID);
+            }
+        }
     }
 
     private string BuildKnifeMenuHtml(CCSPlayerController player)
@@ -221,7 +274,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (type == KnifeType.Vip && !HasVip(validPlayer))
         {
             validPlayer.PrintToChat(" \x02[Knife Menu]\x01 VIP Knife este doar pentru VIP.");
-            validPlayer.PrintToCenterHtml(BuildKnifeMenuHtml(validPlayer), 30);
+            validPlayer.PrintToCenterHtml(BuildKnifeMenuHtml(validPlayer), 2);
             return HookResult.Handled;
         }
 

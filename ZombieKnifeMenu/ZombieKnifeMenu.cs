@@ -55,7 +55,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "2.1.0";
+    public override string ModuleVersion => "2.2.0";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -95,7 +95,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v2.1.0 loaded.");
+        Console.WriteLine("[ZombieKnifeMenu] v2.2.0 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -298,9 +298,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         var validPlayer = player!;
 
-        // Radio-style behavior:
-        // while Knife Menu is open -> the number selects the menu option;
-        // outside Knife Menu -> forward the player's normal slot command.
+        // Outside Knife Menu, number keys keep their normal weapon-slot behavior.
         if (!_openKnifeMenus.Contains(validPlayer.SteamID))
         {
             try
@@ -314,10 +312,48 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             return;
         }
 
+        // Exact CS 1.6 / radio-style mapping requested:
+        // 1-5 = choose knife, 9 = close.
         if (key == 9)
+        {
             _openKnifeMenus.Remove(validPlayer.SteamID);
 
-        MenuManager.OnKeyPress(validPlayer, key);
+            try
+            {
+                MenuManager.CloseActiveMenu(validPlayer);
+            }
+            catch
+            {
+            }
+
+            return;
+        }
+
+        KnifeType selected = key switch
+        {
+            1 => KnifeType.Speed,
+            2 => KnifeType.Gravity,
+            3 => KnifeType.Knockback,
+            4 => KnifeType.Damage,
+            5 => KnifeType.Vip,
+            _ => 0
+        };
+
+        if (selected == 0)
+            return;
+
+        // Close the visual menu immediately, then apply the chosen knife.
+        _openKnifeMenus.Remove(validPlayer.SteamID);
+
+        try
+        {
+            MenuManager.CloseActiveMenu(validPlayer);
+        }
+        catch
+        {
+        }
+
+        SelectKnife(validPlayer, selected);
     }
 
     private void SelectKnife(CCSPlayerController player, KnifeType type)
@@ -350,10 +386,9 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             ApplyMovementToPlayer(player);
         });
 
-        // Give ChangeSubclass a moment to settle, then do a real weapon
-        // switch away-and-back. That makes CS2 play the knife's deploy/draw
-        // animation instead of merely changing the model while it is already held.
-        AddTimer(0.08f, () =>
+        // Very fast switch away-and-back so CS2 plays the knife deploy/draw
+        // animation without the transition feeling slow.
+        AddTimer(0.03f, () =>
         {
             if (IsAliveHuman(player))
                 ForceKnifeDrawAnimation(player);
@@ -386,18 +421,18 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         {
             if (knifeWasAlreadyOut)
             {
-                // Same idea as a real weapon change: go to the previous weapon,
-                // then return to slot3 so the custom knife runs its deploy sequence.
+                // Fast weapon-change pulse: previous weapon -> knife.
+                // This triggers the knife deploy animation while keeping it snappy.
                 player.ExecuteClientCommand("lastinv");
 
-                AddTimer(0.10f, () =>
+                AddTimer(0.035f, () =>
                 {
                     if (!IsAliveHuman(player))
                         return;
 
                     ApplySelectedKnifeSubclass(player);
 
-                    AddTimer(0.04f, () =>
+                    AddTimer(0.015f, () =>
                     {
                         if (!IsAliveHuman(player))
                             return;
@@ -418,7 +453,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
                 // selecting slot3 naturally plays the draw/deploy animation.
                 ApplySelectedKnifeSubclass(player);
 
-                AddTimer(0.04f, () =>
+                AddTimer(0.015f, () =>
                 {
                     if (!IsAliveHuman(player))
                         return;

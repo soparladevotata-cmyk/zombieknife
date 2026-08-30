@@ -48,16 +48,6 @@ public sealed class KnifeSettings
 
     // Base CT knife subclass used when reverting.
     public string DefaultKnifeSubclass { get; set; } = "weapon_knife";
-
-    // On-screen Knife Menu (CS2-GameHUD)
-    public byte MenuHudChannel { get; set; } = 241;
-    public float MenuHudX { get; set; } = -2.8f;
-    public float MenuHudY { get; set; } = 1.45f;
-    public float MenuHudDistance { get; set; } = 7.0f;
-    public int MenuHudFontSize { get; set; } = 30;
-    public float MenuHudWorldUnitsPerPixel { get; set; } = 0.0105f;
-    public float MenuHudBackgroundHeight { get; set; } = 0.35f;
-    public float MenuHudBackgroundWidth { get; set; } = 0.55f;
 }
 
 
@@ -65,13 +55,14 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "2.0.0";
+    public override string ModuleVersion => "2.0.1";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
 
     private KnifeSettings _settings = new();
     private readonly Dictionary<string, KnifeType> _selections = new();
+    private readonly HashSet<ulong> _openKnifeMenus = new();
 
     private string SettingsPath => Path.Combine(ModuleDirectory, "config.json");
     private string SelectionsPath => Path.Combine(ModuleDirectory, "knife_selections.json");
@@ -104,13 +95,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        // CS2/Zombie plugins can overwrite the center HUD very quickly.
-        // Redraw the knife menu while it is open so it stays visible until
-        // the player selects an option or presses 9.
-        AddTimer(0.35f, RefreshOpenKnifeMenus,
-            TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
-
-        Console.WriteLine("[ZombieKnifeMenu] v2.0.0 loaded.");
+        Console.WriteLine("[ZombieKnifeMenu] v2.0.1 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -125,6 +110,8 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             ResetMovement(player);
             ResetKnifeSubclass(player);
         }
+
+        _openKnifeMenus.Clear();
     }
 
     [ConsoleCommand("css_knife", "Open Knife Menu")]
@@ -299,6 +286,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             (p, _) => SelectKnife(p, KnifeType.Vip),
             disabled: !hasVip);
 
+        _openKnifeMenus.Add(player.SteamID);
         menu.Open(player);
     }
 
@@ -311,11 +299,15 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             return;
 
         var validPlayer = player!;
-        var active = MenuManager.GetActiveMenu(validPlayer);
 
-        // Do nothing outside our Knife Menu, so the normal slot bind still works.
-        if (active == null || !string.Equals(active.Menu.Title, "Knife Menu", StringComparison.Ordinal))
+        // We track our own menu instead of reading IMenuInstance.Menu,
+        // which is protected in the CounterStrikeSharp API.
+        if (!_openKnifeMenus.Contains(validPlayer.SteamID))
             return;
+
+        // Key 9 closes the menu.
+        if (key == 9)
+            _openKnifeMenus.Remove(validPlayer.SteamID);
 
         MenuManager.OnKeyPress(validPlayer, key);
     }
@@ -324,6 +316,8 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
     {
         if (!IsRealPlayer(player))
             return;
+
+        _openKnifeMenus.Remove(player.SteamID);
 
         if (type == KnifeType.Vip && !HasVip(player))
         {
@@ -375,6 +369,10 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
     private HookResult OnPlayerDisconnect(EventPlayerDisconnect @event, GameEventInfo info)
     {
+        var player = @event.Userid;
+        if (player != null)
+            _openKnifeMenus.Remove(player.SteamID);
+
         return HookResult.Continue;
     }
 

@@ -4,16 +4,12 @@ using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
-using CounterStrikeSharp.API.Core.Capabilities;
 using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Entities.Constants;
 using CounterStrikeSharp.API.Modules.Memory;
 using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.Utils;
-using CS2_GameHUDAPI;
-using DrawingColor = System.Drawing.Color;
-using NumericsVector3 = System.Numerics.Vector3;
 
 namespace ZombieKnifeMenu;
 
@@ -70,7 +66,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "1.8.0";
+    public override string ModuleVersion => "1.9.0";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -78,7 +74,6 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
     private KnifeSettings _settings = new();
     private readonly Dictionary<string, KnifeType> _selections = new();
     private readonly HashSet<ulong> _openKnifeMenus = new();
-    private IGameHUDAPI? _gameHud;
 
     private string SettingsPath => Path.Combine(ModuleDirectory, "config.json");
     private string SelectionsPath => Path.Combine(ModuleDirectory, "knife_selections.json");
@@ -110,17 +105,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Logger.LogInformation("[ZombieKnifeMenu] v1.8.0 loaded.");
-    }
-
-    public override void OnAllPluginsLoaded(bool hotReload)
-    {
-        _gameHud = IGameHUDAPI.Capability.Get();
-
-        if (_gameHud == null)
-            Logger.LogError("[ZombieKnifeMenu] CS2-GameHUD API not found. Install CS2-GameHUD + its shared API.");
-        else
-            Logger.LogInformation("[ZombieKnifeMenu] CS2-GameHUD API connected.");
+        Logger.LogInformation("[ZombieKnifeMenu] v1.9.0 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -179,52 +164,33 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
     private void OpenKnifeMenu(CCSPlayerController player)
     {
-        if (_gameHud == null)
-        {
-            player.PrintToChat(" \x02[Knife Menu]\x01 CS2-GameHUD nu este incarcat pe server.");
-            return;
-        }
-
-        _gameHud.Native_GameHUD_SetParams(
-            player,
-            _settings.MenuHudChannel,
-            new NumericsVector3(
-                _settings.MenuHudX,
-                _settings.MenuHudY,
-                _settings.MenuHudDistance),
-            DrawingColor.FromArgb(245, 232, 190),
-            _settings.MenuHudFontSize,
-            "Verdana",
-            _settings.MenuHudWorldUnitsPerPixel,
-            PointWorldTextJustifyHorizontal_t.POINT_WORLD_TEXT_JUSTIFY_HORIZONTAL_LEFT,
-            PointWorldTextJustifyVertical_t.POINT_WORLD_TEXT_JUSTIFY_VERTICAL_TOP,
-            PointWorldTextReorientMode_t.POINT_WORLD_TEXT_REORIENT_NONE,
-            _settings.MenuHudBackgroundHeight,
-            _settings.MenuHudBackgroundWidth);
-
-        _gameHud.Native_GameHUD_ShowPermanent(
-            player,
-            _settings.MenuHudChannel,
-            BuildKnifeMenuText(player));
-
         _openKnifeMenus.Add(player.SteamID);
+
+        // CounterStrikeSharp native on-screen HTML HUD.
+        // No CS2ScreenMenuAPI / CS2-GameHUD dependency.
+        player.PrintToCenterHtml(BuildKnifeMenuHtml(player), 30);
     }
 
-    private string BuildKnifeMenuText(CCSPlayerController player)
+    private string BuildKnifeMenuHtml(CCSPlayerController player)
     {
         var selected = GetSelection(player);
-        var vipText = HasVip(player) ? "VIP Knife" : "VIP Knife [VIP ONLY]";
+        var vip = HasVip(player);
 
-        string Mark(KnifeType type) => selected == type ? "  <" : "";
+        string Sel(KnifeType type) =>
+            selected == type ? " <font color='#55FF55'>[SELECTED]</font>" : "";
+
+        string vipLine = vip
+            ? $"5. VIP Knife{Sel(KnifeType.Vip)}"
+            : "5. <font color='#777777'>VIP Knife [VIP ONLY]</font>";
 
         return
-            "Knife Menu\n\n" +
-            $"1. Speed Knife{Mark(KnifeType.Speed)}\n" +
-            $"2. Gravity Knife{Mark(KnifeType.Gravity)}\n" +
-            $"3. Knockback Knife{Mark(KnifeType.Knockback)}\n" +
-            $"4. Damage Knife{Mark(KnifeType.Damage)}\n" +
-            $"5. {vipText}{Mark(KnifeType.Vip)}\n\n" +
-            "9. Close";
+            "<font color='#FFD36A' size='24'>Knife Menu</font><br><br>" +
+            $"<font color='#FFFFFF'>1. Speed Knife{Sel(KnifeType.Speed)}<br>" +
+            $"2. Gravity Knife{Sel(KnifeType.Gravity)}<br>" +
+            $"3. Knockback Knife{Sel(KnifeType.Knockback)}<br>" +
+            $"4. Damage Knife{Sel(KnifeType.Damage)}<br>" +
+            $"{vipLine}<br><br>" +
+            "<font color='#FF7777'>9. Close</font></font>";
     }
 
     private HookResult HandleMenuKey(CCSPlayerController? player, int key)
@@ -256,12 +222,16 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (type == KnifeType.Vip && !HasVip(validPlayer))
         {
             validPlayer.PrintToChat(" \x02[Knife Menu]\x01 VIP Knife este doar pentru VIP.");
-            OpenKnifeMenu(validPlayer);
+            validPlayer.PrintToCenterHtml(BuildKnifeMenuHtml(validPlayer), 30);
             return HookResult.Handled;
         }
 
-        SelectKnife(validPlayer, type);
+        // Close/remove menu state BEFORE SelectKnife.
+        // SelectKnife executes slot3 to pull the knife out; if menu were still
+        // marked open, our slot3 listener would incorrectly select option 3.
         CloseKnifeMenu(validPlayer);
+
+        SelectKnife(validPlayer, type);
         return HookResult.Handled;
     }
 
@@ -270,67 +240,15 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (!IsRealPlayer(player))
             return;
 
-        if (_gameHud != null)
-        {
-            try
-            {
-                _gameHud.Native_GameHUD_Remove(player!, _settings.MenuHudChannel);
-            }
-            catch
-            {
-            }
-        }
-
         _openKnifeMenus.Remove(player!.SteamID);
-    }
 
-    private void SelectKnife(CCSPlayerController player, KnifeType type)
-    {
-        if (!IsRealPlayer(player))
-            return;
-
-        if (type == KnifeType.Vip && !HasVip(player))
+        // Clear the native center HTML quickly.
+        try
         {
-            player.PrintToChat(" \x02[Knife Menu]\x01 VIP Knife este doar pentru VIP.");
-            return;
+            player.PrintToCenterHtml(" ", 1);
         }
-
-        _selections[SteamKey(player)] = type;
-        SaveSelections();
-
-        player.PrintToChat($" \x04[Knife Menu]\x01 Ai ales \x10{KnifeName(type)}\x01.");
-
-        if (IsAliveHuman(player))
+        catch
         {
-            Server.NextFrame(() =>
-            {
-                // Apply the selected VData subclass immediately.
-                ApplySelectedKnifeSubclass(player);
-                ApplyMovementToPlayer(player);
-
-                // Pull the knife out so the client refreshes the first-person model.
-                try
-                {
-                    player.ExecuteClientCommand("slot3");
-                }
-                catch
-                {
-                }
-            });
-
-            // Re-apply shortly afterwards because Zombie:Reborn / inventory code can
-            // touch the weapon entity on the next few frames.
-            AddTimer(0.20f, () =>
-            {
-                if (IsAliveHuman(player))
-                    ApplySelectedKnifeSubclass(player);
-            }, TimerFlags.STOP_ON_MAPCHANGE);
-
-            AddTimer(0.60f, () =>
-            {
-                if (IsAliveHuman(player))
-                    ApplySelectedKnifeSubclass(player);
-            }, TimerFlags.STOP_ON_MAPCHANGE);
         }
     }
 

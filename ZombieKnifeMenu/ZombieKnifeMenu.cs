@@ -6,7 +6,6 @@ using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Entities.Constants;
 using CounterStrikeSharp.API.Modules.Memory;
-using CounterStrikeSharp.API.Modules.UserMessages;
 using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.Utils;
 
@@ -55,10 +54,10 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "2.4.0";
+    public override string ModuleVersion => "2.5.0";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
-        "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
+        "Native CS2 radio Knife Menu with custom CS2 weapon models for Zombie:Reborn";
 
     private KnifeSettings _settings = new();
     private readonly Dictionary<string, KnifeType> _selections = new();
@@ -75,19 +74,22 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         AddCommand("css_knives", "Open Knife Menu", OnKnifeCommand);
 
-        // CS2 does not send the normal client-side slot1..slot9 commands to the server.
-        // Number keys are therefore bound to these server-visible commands once via !bindknife.
-        AddCommand("css_k1", "Knife menu key 1", (p, c) => HandleBoundMenuKey(p, 1));
-        AddCommand("css_k2", "Knife menu key 2", (p, c) => HandleBoundMenuKey(p, 2));
-        AddCommand("css_k3", "Knife menu key 3", (p, c) => HandleBoundMenuKey(p, 3));
-        AddCommand("css_k4", "Knife menu key 4", (p, c) => HandleBoundMenuKey(p, 4));
-        AddCommand("css_k5", "Knife menu key 5", (p, c) => HandleBoundMenuKey(p, 5));
-        AddCommand("css_k9", "Knife menu key 9", (p, c) => HandleBoundMenuKey(p, 9));
+        // The Knife Menu is the REAL CS2 Common Radio menu.
+        // These are the native commands fired by physical keys 1-6 in that panel.
+        AddCommandListener("roger", (p, c) => HandleRadioKnifeCommand(p, KnifeType.Speed));
+        AddCommandListener("negative", (p, c) => HandleRadioKnifeCommand(p, KnifeType.Gravity));
+        AddCommandListener("cheer", (p, c) => HandleRadioKnifeCommand(p, KnifeType.Knockback));
+        AddCommandListener("compliment", (p, c) => HandleRadioKnifeCommand(p, KnifeType.Knockback));
+        AddCommandListener("holdpos", (p, c) => HandleRadioKnifeCommand(p, KnifeType.Damage));
+        AddCommandListener("followme", (p, c) => HandleRadioKnifeCommand(p, KnifeType.Vip));
+        AddCommandListener("thanks", HandleRadioClose);
 
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
         RegisterEventHandler<EventPlayerTeam>(OnPlayerTeam);
         RegisterEventHandler<EventItemEquip>(OnItemEquip);
+
+        RegisterEventHandler<EventPlayerRadio>(OnPlayerRadio);
 
         RegisterListener<Listeners.OnEntityTakeDamagePre>(OnEntityTakeDamagePre);
         RegisterListener<Listeners.OnEntityTakeDamagePost>(OnEntityTakeDamagePost);
@@ -95,10 +97,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        AddTimer(0.30f, RefreshOpenKnifeHuds,
-            TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
-
-        Console.WriteLine("[ZombieKnifeMenu] v2.4.0 loaded.");
+        Console.WriteLine("[ZombieKnifeMenu] v2.5.0 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -107,9 +106,6 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         foreach (var player in Utilities.GetPlayers())
         {
-            if (IsRealPlayer(player))
-                CloseLeftKnifeHud(player);
-
             ResetMovement(player);
             ResetKnifeSubclass(player);
         }
@@ -127,73 +123,6 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         OpenKnifeMenu(player!);
     }
 
-    [ConsoleCommand("css_bindknife", "Bind 1-5/9 to the Knife Menu")]
-    [CommandHelper(whoCanExecute: CommandUsage.CLIENT_ONLY)]
-    public void OnBindKnifeCommand(CCSPlayerController? player, CommandInfo command)
-    {
-        if (!IsRealPlayer(player))
-            return;
-
-        var validPlayer = player!;
-
-        try
-        {
-            // Keep the normal weapon-slot behavior and append our server-visible menu key.
-            validPlayer.ExecuteClientCommand("bind 1 \"css_k1\"");
-            validPlayer.ExecuteClientCommand("bind 2 \"css_k2\"");
-            validPlayer.ExecuteClientCommand("bind 3 \"css_k3\"");
-            validPlayer.ExecuteClientCommand("bind 4 \"css_k4\"");
-            validPlayer.ExecuteClientCommand("bind 5 \"css_k5\"");
-            validPlayer.ExecuteClientCommand("bind 9 \"css_k9\"");
-            validPlayer.ExecuteClientCommand("host_writeconfig");
-
-            validPlayer.PrintToChat(" \x04[Knife Menu]\x01 Am incercat sa leg tastele 1-5 si 9. Deschide \x10!knife\x01 si testeaza.");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[ZombieKnifeMenu] Auto-bind failed for {validPlayer.PlayerName}: {ex}");
-            PrintManualBindHelp(validPlayer);
-        }
-    }
-
-    [ConsoleCommand("css_unbindknife", "Restore normal 1-5/9 slot binds")]
-    [CommandHelper(whoCanExecute: CommandUsage.CLIENT_ONLY)]
-    public void OnUnbindKnifeCommand(CCSPlayerController? player, CommandInfo command)
-    {
-        if (!IsRealPlayer(player))
-            return;
-
-        var validPlayer = player!;
-
-        try
-        {
-            validPlayer.ExecuteClientCommand("bind 1 slot1");
-            validPlayer.ExecuteClientCommand("bind 2 slot2");
-            validPlayer.ExecuteClientCommand("bind 3 slot3");
-            validPlayer.ExecuteClientCommand("bind 4 slot4");
-            validPlayer.ExecuteClientCommand("bind 5 slot5");
-            validPlayer.ExecuteClientCommand("bind 9 slot9");
-            validPlayer.ExecuteClientCommand("host_writeconfig");
-            validPlayer.PrintToChat(" \x04[Knife Menu]\x01 Tastele 1-5/9 au fost restaurate la sloturile normale.");
-        }
-        catch
-        {
-            validPlayer.PrintToChat(" \x02[Knife Menu]\x01 CS2 a blocat restaurarea automata. Pune manual bind-urile normale in consola.");
-        }
-    }
-
-    private static void PrintManualBindHelp(CCSPlayerController player)
-    {
-        player.PrintToChat(" \x04[Knife Menu]\x01 Daca auto-bind-ul este blocat de CS2, copiaza in consola:");
-        player.PrintToConsole("bind 1 \"css_k1\"");
-        player.PrintToConsole("bind 2 \"css_k2\"");
-        player.PrintToConsole("bind 3 \"css_k3\"");
-        player.PrintToConsole("bind 4 \"css_k4\"");
-        player.PrintToConsole("bind 5 \"css_k5\"");
-        player.PrintToConsole("bind 9 \"css_k9\"");
-        player.PrintToConsole("host_writeconfig");
-    }
-
     [ConsoleCommand("css_kniferefresh", "Re-apply selected custom knife model")]
     [CommandHelper(whoCanExecute: CommandUsage.CLIENT_ONLY)]
     public void OnKnifeRefreshCommand(CCSPlayerController? player, CommandInfo command)
@@ -203,7 +132,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         ApplySelectedKnifeSubclass(player!);
 
-        AddTimer(0.08f, () =>
+        AddTimer(0.03f, () =>
         {
             if (IsAliveHuman(player))
                 ForceKnifeDrawAnimation(player!);
@@ -249,155 +178,116 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (!IsRealPlayer(player))
             return;
 
-        EnsureKnifeKeyBinds(player);
-        _openKnifeMenus.Add(player.SteamID);
-        ShowLeftKnifeHud(player);
-    }
-
-    private void EnsureKnifeKeyBinds(CCSPlayerController player)
-    {
-        try
+        if (!IsAliveHuman(player))
         {
-            player.ExecuteClientCommand("bind 1 \"css_k1\"");
-            player.ExecuteClientCommand("bind 2 \"css_k2\"");
-            player.ExecuteClientCommand("bind 3 \"css_k3\"");
-            player.ExecuteClientCommand("bind 4 \"css_k4\"");
-            player.ExecuteClientCommand("bind 5 \"css_k5\"");
-            player.ExecuteClientCommand("bind 9 \"css_k9\"");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(
-                $"[ZombieKnifeMenu] Could not auto-bind menu keys for {player.PlayerName}: {ex}");
-        }
-    }
-
-    private void RefreshOpenKnifeHuds()
-    {
-        if (_openKnifeMenus.Count == 0)
+            player.PrintToChat(" \x02[Knife Menu]\x01 Poti alege cutitul doar cand esti human.");
             return;
-
-        foreach (var player in Utilities.GetPlayers())
-        {
-            if (!IsRealPlayer(player))
-                continue;
-
-            if (!_openKnifeMenus.Contains(player.SteamID))
-                continue;
-
-            ShowLeftKnifeHud(player);
         }
-    }
 
-    private void ShowLeftKnifeHud(CCSPlayerController player)
-    {
-        var selected = GetSelection(player);
-        var vip = HasVip(player);
-
-        string Mark(KnifeType type) =>
-            selected == type ? " [SELECTED]" : "";
-
-        var menuText =
-            "Knife Menu\n\n" +
-            $"1. Speed Knife{Mark(KnifeType.Speed)}\n" +
-            $"2. Gravity Knife{Mark(KnifeType.Gravity)}\n" +
-            $"3. Knockback Knife{Mark(KnifeType.Knockback)}\n" +
-            $"4. Damage Knife{Mark(KnifeType.Damage)}\n" +
-            (vip
-                ? $"5. VIP Knife{Mark(KnifeType.Vip)}\n"
-                : "5. VIP Knife [VIP ONLY]\n") +
-            "\n9. Close";
+        // Arm only this player's next Common Radio selection.
+        _openKnifeMenus.Add(player.SteamID);
 
         try
         {
-            using var message = UserMessage.FromPartialName("CUserMessageHudMsg");
-            message.SetUInt("channel", 6);
-            message.SetFloat("x", 0.02f);
-            message.SetFloat("y", 0.10f);
-            message.SetUInt("color1", 0xFFFFFFFFu);
-            message.SetUInt("color2", 0xFFFFFFFFu);
-            message.SetUInt("effect", 0);
-            message.SetString("message", menuText);
-            message.Recipients.Add(player);
-            message.Send();
+            // This opens Valve's actual Common Radio panel in the upper-left.
+            // Native options are Roger / Negative / Cheer / Hold / Follow / Thanks.
+            // The Workshop localization overlay renames those labels to our knives.
+            player.ExecuteClientCommand("radio");
+
+            Console.WriteLine(
+                $"[ZombieKnifeMenu] Opened native radio Knife Menu for {player.PlayerName}.");
         }
         catch (Exception ex)
         {
+            _openKnifeMenus.Remove(player.SteamID);
             Console.WriteLine(
-                $"[ZombieKnifeMenu] Left HUD failed for {player.PlayerName}: {ex}");
+                $"[ZombieKnifeMenu] Could not execute native radio for {player.PlayerName}: {ex}");
+            player.PrintToChat(
+                " \x02[Knife Menu]\x01 Nu am putut deschide meniul radio nativ.");
+            return;
         }
+
+        // Native 0/Exit is client-side and does not reliably give the plugin a
+        // callback, so automatically disarm after the radio panel's useful window.
+        var steamId = player.SteamID;
+        AddTimer(8.0f, () =>
+        {
+            _openKnifeMenus.Remove(steamId);
+        }, TimerFlags.STOP_ON_MAPCHANGE);
     }
 
-    private void CloseLeftKnifeHud(CCSPlayerController player)
-    {
-        _openKnifeMenus.Remove(player.SteamID);
-
-        try
-        {
-            using var message = UserMessage.FromPartialName("CUserMessageHudMsg");
-            message.SetUInt("channel", 6);
-            message.SetFloat("x", 0.02f);
-            message.SetFloat("y", 0.10f);
-            message.SetUInt("color1", 0xFFFFFFFFu);
-            message.SetUInt("color2", 0xFFFFFFFFu);
-            message.SetUInt("effect", 0);
-            message.SetString("message", "");
-            message.Recipients.Add(player);
-            message.Send();
-        }
-        catch
-        {
-        }
-    }
-
-    private void HandleBoundMenuKey(CCSPlayerController? player, int key)
+    private HookResult HandleRadioKnifeCommand(
+        CCSPlayerController? player,
+        KnifeType type)
     {
         if (!IsRealPlayer(player))
-            return;
+            return HookResult.Continue;
+
+        var validPlayer = player!;
+
+        // If !knife did not arm the radio menu, preserve normal CS2 radio.
+        if (!_openKnifeMenus.Contains(validPlayer.SteamID))
+            return HookResult.Continue;
+
+        _openKnifeMenus.Remove(validPlayer.SteamID);
+
+        if (type == KnifeType.Vip && !HasVip(validPlayer))
+        {
+            validPlayer.PrintToChat(
+                " \x02[Knife Menu]\x01 VIP Knife este doar pentru VIP.");
+
+            // Native radio closes after a selection. Re-open it so the player
+            // can immediately choose 1-4 instead.
+            AddTimer(0.10f, () =>
+            {
+                if (IsAliveHuman(validPlayer))
+                    OpenKnifeMenu(validPlayer);
+            }, TimerFlags.STOP_ON_MAPCHANGE);
+
+            return HookResult.Handled;
+        }
+
+        SelectKnife(validPlayer, type);
+
+        // Suppress the original radio voice/chat line; the key is now a knife pick.
+        return HookResult.Handled;
+    }
+
+    private HookResult HandleRadioClose(
+        CCSPlayerController? player,
+        CommandInfo command)
+    {
+        if (!IsRealPlayer(player))
+            return HookResult.Continue;
 
         var validPlayer = player!;
 
         if (!_openKnifeMenus.Contains(validPlayer.SteamID))
-        {
-            try
-            {
-                validPlayer.ExecuteClientCommand($"slot{key}");
-            }
-            catch
-            {
-            }
+            return HookResult.Continue;
 
-            return;
+        // Option 6 is renamed "Close" by our localization overlay.
+        _openKnifeMenus.Remove(validPlayer.SteamID);
+        return HookResult.Handled;
+    }
+
+    private HookResult OnPlayerRadio(
+        EventPlayerRadio @event,
+        GameEventInfo info)
+    {
+        var player = @event.Userid;
+
+        if (!IsRealPlayer(player))
+            return HookResult.Continue;
+
+        // Diagnostic fallback: if Valve changes which alias a radio row executes,
+        // the event gives us the raw slot so we can map it without guessing.
+        if (_openKnifeMenus.Contains(player!.SteamID))
+        {
+            Console.WriteLine(
+                $"[ZombieKnifeMenu RADIO DEBUG] {player.PlayerName}: player_radio slot={@event.Slot}");
         }
 
-        if (key == 9)
-        {
-            CloseLeftKnifeHud(validPlayer);
-            return;
-        }
-
-        KnifeType selected = key switch
-        {
-            1 => KnifeType.Speed,
-            2 => KnifeType.Gravity,
-            3 => KnifeType.Knockback,
-            4 => KnifeType.Damage,
-            5 => KnifeType.Vip,
-            _ => 0
-        };
-
-        if (selected == 0)
-            return;
-
-        if (selected == KnifeType.Vip && !HasVip(validPlayer))
-        {
-            validPlayer.PrintToChat(" \x02[Knife Menu]\x01 VIP Knife este doar pentru VIP.");
-            ShowLeftKnifeHud(validPlayer);
-            return;
-        }
-
-        CloseLeftKnifeHud(validPlayer);
-        SelectKnife(validPlayer, selected);
+        return HookResult.Continue;
     }
 
     private void SelectKnife(CCSPlayerController player, KnifeType type)
@@ -405,7 +295,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (!IsRealPlayer(player))
             return;
 
-        CloseLeftKnifeHud(player);
+        _openKnifeMenus.Remove(player.SteamID);
 
         if (type == KnifeType.Vip && !HasVip(player))
         {

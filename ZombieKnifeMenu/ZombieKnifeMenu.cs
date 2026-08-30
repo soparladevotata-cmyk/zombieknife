@@ -55,7 +55,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "2.0.1";
+    public override string ModuleVersion => "2.1.0";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -95,7 +95,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v2.0.1 loaded.");
+        Console.WriteLine("[ZombieKnifeMenu] v2.1.0 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -136,12 +136,12 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         try
         {
             // Keep the normal weapon-slot behavior and append our server-visible menu key.
-            validPlayer.ExecuteClientCommand("bind 1 \"slot1;css_k1\"");
-            validPlayer.ExecuteClientCommand("bind 2 \"slot2;css_k2\"");
-            validPlayer.ExecuteClientCommand("bind 3 \"slot3;css_k3\"");
-            validPlayer.ExecuteClientCommand("bind 4 \"slot4;css_k4\"");
-            validPlayer.ExecuteClientCommand("bind 5 \"slot5;css_k5\"");
-            validPlayer.ExecuteClientCommand("bind 9 \"slot9;css_k9\"");
+            validPlayer.ExecuteClientCommand("bind 1 \"css_k1\"");
+            validPlayer.ExecuteClientCommand("bind 2 \"css_k2\"");
+            validPlayer.ExecuteClientCommand("bind 3 \"css_k3\"");
+            validPlayer.ExecuteClientCommand("bind 4 \"css_k4\"");
+            validPlayer.ExecuteClientCommand("bind 5 \"css_k5\"");
+            validPlayer.ExecuteClientCommand("bind 9 \"css_k9\"");
             validPlayer.ExecuteClientCommand("host_writeconfig");
 
             validPlayer.PrintToChat(" \x04[Knife Menu]\x01 Am incercat sa leg tastele 1-5 si 9. Deschide \x10!knife\x01 si testeaza.");
@@ -182,12 +182,12 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
     private static void PrintManualBindHelp(CCSPlayerController player)
     {
         player.PrintToChat(" \x04[Knife Menu]\x01 Daca auto-bind-ul este blocat de CS2, copiaza in consola:");
-        player.PrintToConsole("bind 1 \"slot1;css_k1\"");
-        player.PrintToConsole("bind 2 \"slot2;css_k2\"");
-        player.PrintToConsole("bind 3 \"slot3;css_k3\"");
-        player.PrintToConsole("bind 4 \"slot4;css_k4\"");
-        player.PrintToConsole("bind 5 \"slot5;css_k5\"");
-        player.PrintToConsole("bind 9 \"slot9;css_k9\"");
+        player.PrintToConsole("bind 1 \"css_k1\"");
+        player.PrintToConsole("bind 2 \"css_k2\"");
+        player.PrintToConsole("bind 3 \"css_k3\"");
+        player.PrintToConsole("bind 4 \"css_k4\"");
+        player.PrintToConsole("bind 5 \"css_k5\"");
+        player.PrintToConsole("bind 9 \"css_k9\"");
         player.PrintToConsole("host_writeconfig");
     }
 
@@ -200,15 +200,13 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         ApplySelectedKnifeSubclass(player!);
 
-        try
+        AddTimer(0.08f, () =>
         {
-            player!.ExecuteClientCommand("slot3");
-        }
-        catch
-        {
-        }
+            if (IsAliveHuman(player))
+                ForceKnifeDrawAnimation(player!);
+        }, TimerFlags.STOP_ON_MAPCHANGE);
 
-        player!.PrintToChat(" \x04[Knife Menu]\x01 Modelul selectat a fost reaplicat.");
+        player!.PrintToChat(" \x04[Knife Menu]\x01 Modelul selectat a fost reaplicat cu animatia de draw.");
     }
 
     [ConsoleCommand("css_knifedebug", "Show current knife-menu/model state")]
@@ -300,12 +298,22 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         var validPlayer = player!;
 
-        // We track our own menu instead of reading IMenuInstance.Menu,
-        // which is protected in the CounterStrikeSharp API.
+        // Radio-style behavior:
+        // while Knife Menu is open -> the number selects the menu option;
+        // outside Knife Menu -> forward the player's normal slot command.
         if (!_openKnifeMenus.Contains(validPlayer.SteamID))
-            return;
+        {
+            try
+            {
+                validPlayer.ExecuteClientCommand($"slot{key}");
+            }
+            catch
+            {
+            }
 
-        // Key 9 closes the menu.
+            return;
+        }
+
         if (key == 9)
             _openKnifeMenus.Remove(validPlayer.SteamID);
 
@@ -340,17 +348,16 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
             ApplySelectedKnifeSubclass(player);
             ApplyMovementToPlayer(player);
-
-            // Menu state is already closed before SelectKnife() is called,
-            // so slot3 can safely refresh/pull out the knife.
-            try
-            {
-                player.ExecuteClientCommand("slot3");
-            }
-            catch
-            {
-            }
         });
+
+        // Give ChangeSubclass a moment to settle, then do a real weapon
+        // switch away-and-back. That makes CS2 play the knife's deploy/draw
+        // animation instead of merely changing the model while it is already held.
+        AddTimer(0.08f, () =>
+        {
+            if (IsAliveHuman(player))
+                ForceKnifeDrawAnimation(player);
+        }, TimerFlags.STOP_ON_MAPCHANGE);
 
         // Zombie:Reborn/loadout code may touch the weapon for a few frames,
         // so re-apply the chosen subclass twice.
@@ -365,6 +372,72 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             if (IsAliveHuman(player))
                 ApplySelectedKnifeSubclass(player);
         }, TimerFlags.STOP_ON_MAPCHANGE);
+    }
+
+    private void ForceKnifeDrawAnimation(CCSPlayerController player)
+    {
+        if (!IsAliveHuman(player))
+            return;
+
+        var active = player.PlayerPawn.Value?.WeaponServices?.ActiveWeapon.Value;
+        var knifeWasAlreadyOut = active != null && active.IsValid && IsKnife(active);
+
+        try
+        {
+            if (knifeWasAlreadyOut)
+            {
+                // Same idea as a real weapon change: go to the previous weapon,
+                // then return to slot3 so the custom knife runs its deploy sequence.
+                player.ExecuteClientCommand("lastinv");
+
+                AddTimer(0.10f, () =>
+                {
+                    if (!IsAliveHuman(player))
+                        return;
+
+                    ApplySelectedKnifeSubclass(player);
+
+                    AddTimer(0.04f, () =>
+                    {
+                        if (!IsAliveHuman(player))
+                            return;
+
+                        try
+                        {
+                            player.ExecuteClientCommand("slot3");
+                        }
+                        catch
+                        {
+                        }
+                    }, TimerFlags.STOP_ON_MAPCHANGE);
+                }, TimerFlags.STOP_ON_MAPCHANGE);
+            }
+            else
+            {
+                // Knife is not currently equipped: applying the subclass first and
+                // selecting slot3 naturally plays the draw/deploy animation.
+                ApplySelectedKnifeSubclass(player);
+
+                AddTimer(0.04f, () =>
+                {
+                    if (!IsAliveHuman(player))
+                        return;
+
+                    try
+                    {
+                        player.ExecuteClientCommand("slot3");
+                    }
+                    catch
+                    {
+                    }
+                }, TimerFlags.STOP_ON_MAPCHANGE);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"[ZombieKnifeMenu] Knife draw refresh failed for {player.PlayerName}: {ex}");
+        }
     }
 
     private HookResult OnPlayerDisconnect(EventPlayerDisconnect @event, GameEventInfo info)

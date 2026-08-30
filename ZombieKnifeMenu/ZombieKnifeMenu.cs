@@ -52,11 +52,61 @@ public sealed class KnifeSettings
     public string DefaultKnifeSubclass { get; set; } = "weapon_knife";
 }
 
+
+public sealed class ClassicKnifeMenu : BaseMenu
+{
+    public ClassicKnifeMenu(string title) : base(title)
+    {
+        ExitButton = true;
+        PostSelectAction = PostSelectAction.Close;
+    }
+
+    public override void Open(CCSPlayerController player)
+    {
+        MenuManager.CloseActiveMenu(player);
+
+        var instance = new ClassicKnifeMenuInstance(player, this);
+        MenuManager.GetActiveMenus()[player.Handle] = instance;
+        instance.Display();
+    }
+}
+
+public sealed class ClassicKnifeMenuInstance : BaseMenuInstance
+{
+    public override int NumPerPage => 5;
+
+    public ClassicKnifeMenuInstance(CCSPlayerController player, ClassicKnifeMenu menu)
+        : base(player, menu)
+    {
+    }
+
+    public override void Display()
+    {
+        if (Menu is not ClassicKnifeMenu menu)
+            return;
+
+        Player.PrintToChat($" {ChatColors.Gold}{menu.Title}");
+        Player.PrintToChat(" ");
+
+        int key = 1;
+
+        foreach (var option in menu.MenuOptions.Take(5))
+        {
+            var color = option.Disabled ? ChatColors.Grey : ChatColors.Green;
+            Player.PrintToChat($" {color}{key}. {ChatColors.Default}{option.Text}");
+            key++;
+        }
+
+        Player.PrintToChat(" ");
+        Player.PrintToChat($" {ChatColors.Red}9. {ChatColors.Default}Close");
+    }
+}
+
 [MinimumApiVersion(80)]
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "1.5.0";
+    public override string ModuleVersion => "1.6.0";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -85,7 +135,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Logger.LogInformation("[ZombieKnifeMenu] v1.5.0 loaded.");
+        Logger.LogInformation("[ZombieKnifeMenu] v1.6.0 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -123,12 +173,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
     {
         var vip = HasVip(player);
 
-        // Native CounterStrikeSharp menu: no external menu DLL, so it stays
-        // compatible with the exact CounterStrikeSharp version running the server.
-        var menu = new ChatMenu("Knife Menu")
-        {
-            ExitButton = true
-        };
+        var menu = new ClassicKnifeMenu("Knife Menu");
 
         menu.AddMenuOption(
             BuildLabel(player, KnifeType.Speed, "Speed Knife"),
@@ -151,7 +196,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             (p, _) => SelectKnife(p, KnifeType.Vip),
             disabled: !vip);
 
-        MenuManager.OpenChatMenu(player, menu);
+        menu.Open(player);
     }
 
     private string BuildLabel(CCSPlayerController player, KnifeType type, string name)

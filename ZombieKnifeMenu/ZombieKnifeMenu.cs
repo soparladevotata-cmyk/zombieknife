@@ -6,9 +6,9 @@ using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Entities.Constants;
 using CounterStrikeSharp.API.Modules.Memory;
+using CounterStrikeSharp.API.Modules.UserMessages;
 using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.Utils;
-using CounterStrikeSharp.API.Modules.UserMessages;
 
 namespace ZombieKnifeMenu;
 
@@ -55,7 +55,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "2.3.2";
+    public override string ModuleVersion => "2.4.0";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -84,10 +84,6 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         AddCommand("css_k5", "Knife menu key 5", (p, c) => HandleBoundMenuKey(p, 5));
         AddCommand("css_k9", "Knife menu key 9", (p, c) => HandleBoundMenuKey(p, 9));
 
-        // Native CS2 ShowMenu (same HUD family as the radio menu) sends
-        // "menuselect N" when the player presses a numbered option.
-        AddCommandListener("menuselect", HandleNativeMenuSelect, HookMode.Pre);
-
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
         RegisterEventHandler<EventPlayerTeam>(OnPlayerTeam);
@@ -99,7 +95,10 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v2.3.2 loaded.");
+        AddTimer(0.30f, RefreshOpenKnifeHuds,
+            TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+
+        Console.WriteLine("[ZombieKnifeMenu] v2.4.0 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -109,7 +108,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         foreach (var player in Utilities.GetPlayers())
         {
             if (IsRealPlayer(player))
-                CloseNativeKnifeMenu(player);
+                CloseLeftKnifeHud(player);
 
             ResetMovement(player);
             ResetKnifeSubclass(player);
@@ -250,16 +249,53 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (!IsRealPlayer(player))
             return;
 
+        EnsureKnifeKeyBinds(player);
         _openKnifeMenus.Add(player.SteamID);
-        ShowNativeKnifeMenu(player);
+        ShowLeftKnifeHud(player);
     }
 
-    private void ShowNativeKnifeMenu(CCSPlayerController player)
+    private void EnsureKnifeKeyBinds(CCSPlayerController player)
+    {
+        try
+        {
+            player.ExecuteClientCommand("bind 1 \"css_k1\"");
+            player.ExecuteClientCommand("bind 2 \"css_k2\"");
+            player.ExecuteClientCommand("bind 3 \"css_k3\"");
+            player.ExecuteClientCommand("bind 4 \"css_k4\"");
+            player.ExecuteClientCommand("bind 5 \"css_k5\"");
+            player.ExecuteClientCommand("bind 9 \"css_k9\"");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"[ZombieKnifeMenu] Could not auto-bind menu keys for {player.PlayerName}: {ex}");
+        }
+    }
+
+    private void RefreshOpenKnifeHuds()
+    {
+        if (_openKnifeMenus.Count == 0)
+            return;
+
+        foreach (var player in Utilities.GetPlayers())
+        {
+            if (!IsRealPlayer(player))
+                continue;
+
+            if (!_openKnifeMenus.Contains(player.SteamID))
+                continue;
+
+            ShowLeftKnifeHud(player);
+        }
+    }
+
+    private void ShowLeftKnifeHud(CCSPlayerController player)
     {
         var selected = GetSelection(player);
         var vip = HasVip(player);
 
-        string Mark(KnifeType type) => selected == type ? " [SELECTED]" : "";
+        string Mark(KnifeType type) =>
+            selected == type ? " [SELECTED]" : "";
 
         var menuText =
             "Knife Menu\n\n" +
@@ -274,40 +310,38 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         try
         {
-            // IMPORTANT: use the CS-specific CCSUsrMsg_ShowMenu, NOT the generic
-            // Source2 ShowMenu message. The CS-specific protobuf uses:
-            // bits_valid_slots, display_time, menu_string.
-            // Valid keys 1,2,3,4,5,9 -> bits 0,1,2,3,4,8 = 287.
-            using var message = UserMessage.FromPartialName("CCSUsrMsg_ShowMenu");
-            message.SetInt("bits_valid_slots", 287);
-            message.SetInt("display_time", 20);
-            message.SetString("menu_string", menuText);
+            using var message = UserMessage.FromPartialName("CUserMessageHudMsg");
+            message.SetUInt("channel", 6);
+            message.SetFloat("x", 0.02f);
+            message.SetFloat("y", 0.10f);
+            message.SetUInt("color1", 0xFFFFFFFFu);
+            message.SetUInt("color2", 0xFFFFFFFFu);
+            message.SetUInt("effect", 0);
+            message.SetString("message", menuText);
             message.Recipients.Add(player);
             message.Send();
-
-            Console.WriteLine(
-                $"[ZombieKnifeMenu] CCSUsrMsg_ShowMenu sent to {player.PlayerName}.");
         }
         catch (Exception ex)
         {
             Console.WriteLine(
-                $"[ZombieKnifeMenu] Native ShowMenu failed for {player.PlayerName}: {ex}");
-
-            player.PrintToChat(
-                " \x02[Knife Menu]\x01 Native radio menu failed. Check server console.");
+                $"[ZombieKnifeMenu] Left HUD failed for {player.PlayerName}: {ex}");
         }
     }
 
-    private void CloseNativeKnifeMenu(CCSPlayerController player)
+    private void CloseLeftKnifeHud(CCSPlayerController player)
     {
         _openKnifeMenus.Remove(player.SteamID);
 
         try
         {
-            using var message = UserMessage.FromPartialName("CCSUsrMsg_ShowMenu");
-            message.SetInt("bits_valid_slots", 0);
-            message.SetInt("display_time", 0);
-            message.SetString("menu_string", "");
+            using var message = UserMessage.FromPartialName("CUserMessageHudMsg");
+            message.SetUInt("channel", 6);
+            message.SetFloat("x", 0.02f);
+            message.SetFloat("y", 0.10f);
+            message.SetUInt("color1", 0xFFFFFFFFu);
+            message.SetUInt("color2", 0xFFFFFFFFu);
+            message.SetUInt("effect", 0);
+            message.SetString("message", "");
             message.Recipients.Add(player);
             message.Send();
         }
@@ -316,35 +350,29 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         }
     }
 
-    private HookResult HandleNativeMenuSelect(CCSPlayerController? player, CommandInfo command)
+    private void HandleBoundMenuKey(CCSPlayerController? player, int key)
     {
         if (!IsRealPlayer(player))
-            return HookResult.Continue;
+            return;
 
         var validPlayer = player!;
 
         if (!_openKnifeMenus.Contains(validPlayer.SteamID))
-            return HookResult.Continue;
+        {
+            try
+            {
+                validPlayer.ExecuteClientCommand($"slot{key}");
+            }
+            catch
+            {
+            }
 
-        if (command.ArgCount < 2 ||
-            !int.TryParse(command.GetArg(1), out var key))
-            return HookResult.Handled;
-
-        Console.WriteLine(
-            $"[ZombieKnifeMenu] menuselect {key} from {validPlayer.PlayerName}.");
-
-        HandleKnifeMenuSelection(validPlayer, key);
-        return HookResult.Handled;
-    }
-
-    private void HandleKnifeMenuSelection(CCSPlayerController player, int key)
-    {
-        if (!_openKnifeMenus.Contains(player.SteamID))
             return;
+        }
 
         if (key == 9)
         {
-            CloseNativeKnifeMenu(player);
+            CloseLeftKnifeHud(validPlayer);
             return;
         }
 
@@ -361,40 +389,15 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (selected == 0)
             return;
 
-        if (selected == KnifeType.Vip && !HasVip(player))
+        if (selected == KnifeType.Vip && !HasVip(validPlayer))
         {
-            player.PrintToChat(" \x02[Knife Menu]\x01 VIP Knife este doar pentru VIP.");
-            ShowNativeKnifeMenu(player);
+            validPlayer.PrintToChat(" \x02[Knife Menu]\x01 VIP Knife este doar pentru VIP.");
+            ShowLeftKnifeHud(validPlayer);
             return;
         }
 
-        CloseNativeKnifeMenu(player);
-        SelectKnife(player, selected);
-    }
-
-    private void HandleBoundMenuKey(CCSPlayerController? player, int key)
-    {
-        if (!IsRealPlayer(player))
-            return;
-
-        var validPlayer = player!;
-
-        // Compatibility with clients that already used !bindknife in an older build.
-        // Outside the menu, keep the normal slot behavior.
-        if (!_openKnifeMenus.Contains(validPlayer.SteamID))
-        {
-            try
-            {
-                validPlayer.ExecuteClientCommand($"slot{key}");
-            }
-            catch
-            {
-            }
-
-            return;
-        }
-
-        HandleKnifeMenuSelection(validPlayer, key);
+        CloseLeftKnifeHud(validPlayer);
+        SelectKnife(validPlayer, selected);
     }
 
     private void SelectKnife(CCSPlayerController player, KnifeType type)
@@ -402,7 +405,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         if (!IsRealPlayer(player))
             return;
 
-        CloseNativeKnifeMenu(player);
+        CloseLeftKnifeHud(player);
 
         if (type == KnifeType.Vip && !HasVip(player))
         {

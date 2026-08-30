@@ -3,6 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>ZombieKnifeMenu</AssemblyName>
     <RootNamespace>ZombieKnifeMenu</RootNamespace>
     <LangVersion>latest</LangVersion>
@@ -10,5 +11,6 @@
 
   <ItemGroup>
     <PackageReference Include="CounterStrikeSharp.API" Version="1.0.373" />
+    <PackageReference Include="CS2ScreenMenuAPI" Version="3.1.1" />
   </ItemGroup>
 </Project>

@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+
 using System.Text.Json;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
@@ -66,7 +66,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "1.9.0";
+    public override string ModuleVersion => "1.9.1";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "CS 1.6-style Knife Menu with custom CS2 weapon models for Zombie:Reborn";
@@ -105,7 +105,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Logger.LogInformation("[ZombieKnifeMenu] v1.9.0 loaded.");
+        Logger.LogInformation("[ZombieKnifeMenu] v1.9.1 loaded.");
     }
 
     public override void Unload(bool hotReload)
@@ -252,6 +252,59 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         }
     }
 
+    private void SelectKnife(CCSPlayerController player, KnifeType type)
+    {
+        if (!IsRealPlayer(player))
+            return;
+
+        if (type == KnifeType.Vip && !HasVip(player))
+        {
+            player.PrintToChat(" \x02[Knife Menu]\x01 VIP Knife este doar pentru VIP.");
+            return;
+        }
+
+        _selections[SteamKey(player)] = type;
+        SaveSelections();
+
+        player.PrintToChat($" \x04[Knife Menu]\x01 Ai ales \x10{KnifeName(type)}\x01.");
+
+        if (!IsAliveHuman(player))
+            return;
+
+        Server.NextFrame(() =>
+        {
+            if (!IsAliveHuman(player))
+                return;
+
+            ApplySelectedKnifeSubclass(player);
+            ApplyMovementToPlayer(player);
+
+            // Menu state is already closed before SelectKnife() is called,
+            // so slot3 can safely refresh/pull out the knife.
+            try
+            {
+                player.ExecuteClientCommand("slot3");
+            }
+            catch
+            {
+            }
+        });
+
+        // Zombie:Reborn/loadout code may touch the weapon for a few frames,
+        // so re-apply the chosen subclass twice.
+        AddTimer(0.20f, () =>
+        {
+            if (IsAliveHuman(player))
+                ApplySelectedKnifeSubclass(player);
+        }, TimerFlags.STOP_ON_MAPCHANGE);
+
+        AddTimer(0.60f, () =>
+        {
+            if (IsAliveHuman(player))
+                ApplySelectedKnifeSubclass(player);
+        }, TimerFlags.STOP_ON_MAPCHANGE);
+    }
+
     private HookResult OnPlayerDisconnect(EventPlayerDisconnect @event, GameEventInfo info)
     {
         var player = @event.Userid;
@@ -272,17 +325,19 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             if (!IsRealPlayer(player))
                 return;
 
-            ResetMovement(player);
+            var validPlayer = player!;
 
-            if (IsAliveHuman(player))
+            ResetMovement(validPlayer);
+
+            if (IsAliveHuman(validPlayer))
             {
-                ValidateVipSelection(player);
-                ApplySelectedKnifeSubclass(player);
-                ApplyMovementToPlayer(player);
+                ValidateVipSelection(validPlayer);
+                ApplySelectedKnifeSubclass(validPlayer);
+                ApplyMovementToPlayer(validPlayer);
             }
             else
             {
-                ResetKnifeSubclass(player);
+                ResetKnifeSubclass(validPlayer);
             }
         }, TimerFlags.STOP_ON_MAPCHANGE);
 

@@ -55,7 +55,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "3.1.0";
+    public override string ModuleVersion => "3.1.1";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "Zombie:Reborn knife menu with 5 direct custom models and gameplay effects";
@@ -98,7 +98,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v3.1.0 loaded.");
+        Console.WriteLine("[ZombieKnifeMenu] v3.1.1 loaded.");
         Console.WriteLine("[ZombieKnifeMenu] Custom models: Speed=Switch Feather, Gravity=Morrowind, Knockback=Cudgel, Damage=Blaine Spineedge, VIP=Baseball Bat.");
     }
 
@@ -934,15 +934,25 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
     private static CBaseModelEntity? GetViewModel(CCSPlayerController player)
     {
-        var viewModelServices = player.PlayerPawn.Value?.ViewModelServices;
-        if (viewModelServices == null)
+        var pawn = player.PlayerPawn.Value;
+        if (pawn == null || !pawn.IsValid)
+            return null;
+
+        // API 1.0.373 does not expose ViewModelServices as a generated pawn
+        // property. Read the native services pointer from the schema instead.
+        var viewModelServices = Schema.GetRef<IntPtr>(
+            pawn.Handle,
+            "CCSPlayerPawnBase",
+            "m_pViewModelServices");
+
+        if (viewModelServices == IntPtr.Zero)
             return null;
 
         // m_hViewModel is a fixed array of 32-bit CHandles. Slot 0 is the
         // player's normal first-person weapon model. Reading it as an IntPtr
         // (the older implementation) skips bytes on 64-bit servers.
         var rawHandle = Schema.GetRef<uint>(
-            viewModelServices.Handle,
+            viewModelServices,
             "CCSPlayer_ViewModelServices",
             "m_hViewModel");
 

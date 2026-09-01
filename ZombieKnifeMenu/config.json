@@ -13,5 +13,10 @@
   "KnockbackKnifeSubclass": "weapon_knife_zk_knockback",
   "DamageKnifeSubclass": "weapon_knife_zk_damage",
   "VipKnifeSubclass": "weapon_knife_zk_vip",
+  "SpeedKnifeModel": "weapons/nozb1/knife/switch_feather/switch_feather.vmdl",
+  "GravityKnifeModel": "weapons/nozb1/knife/morrowind/morrowind.vmdl",
+  "KnockbackKnifeModel": "weapons/nozb1/knife/cudgel/cudgel.vmdl",
+  "DamageKnifeModel": "weapons/nozb1/knife/blaine_spineedge/blaine_spineedge.vmdl",
+  "VipKnifeModel": "weapons/nozb1/knife/baseball_batlow/baseball_batlow.vmdl",
   "DefaultKnifeSubclass": "weapon_knife"
 }

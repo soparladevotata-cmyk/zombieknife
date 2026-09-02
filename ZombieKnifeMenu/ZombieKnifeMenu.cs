@@ -70,10 +70,10 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "3.1.5";
+    public override string ModuleVersion => "3.1.6";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
-        "Zombie:Reborn knife menu using native CS2 AG2 knife entities";
+        "Human-only native CS2 knife subclasses; zombie inventory is never mutated";
 
     private KnifeSettings _settings = new();
     private readonly Dictionary<string, KnifeType> _selections = new();
@@ -110,8 +110,8 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v3.1.5 NATIVE loaded (CounterStrikeSharp 1.0.373 / .NET 10 compatible).");
-        Console.WriteLine("[ZombieKnifeMenu] Native AG2 knives enabled; legacy Workshop models remain disabled.");
+        Console.WriteLine("[ZombieKnifeMenu] v3.1.6 HUMAN-ONLY loaded (CounterStrikeSharp 1.0.373 / .NET 10 compatible).");
+        Console.WriteLine("[ZombieKnifeMenu] T/Zombie knives are never removed, replaced, reset or model-swapped.");
     }
 
     public override void Unload(bool hotReload)
@@ -583,51 +583,46 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             return;
 
         ValidateVipSelection(player);
-        GiveNativeKnife(player, GetSelectedSubclass(player));
+        ApplyNativeKnifeSubclass(player, GetSelectedSubclass(player));
     }
 
     private void ResetKnifeSubclass(CCSPlayerController? player)
     {
-        if (!IsAlivePlayer(player))
-            return;
-
-        var defaultKnife = player!.TeamNum == _settings.ZombieTeam
-            ? "weapon_knife_t"
-            : _settings.DefaultKnifeSubclass;
-
-        GiveNativeKnife(player, defaultKnife);
+        // Intentionally empty. Zombie:Reborn owns the T/Zombie inventory.
+        // Removing or replacing its knife can crash the server during infection.
     }
 
     private void ApplyDirectKnifeModel(CCSPlayerController player, CBasePlayerWeapon knife)
     {
-        // Intentionally disabled. Native GiveNamedItem creates the matching
-        // first-person and world model without touching legacy Workshop assets.
+        // Intentionally disabled. The plugin never swaps model resources directly.
     }
 
-    private void GiveNativeKnife(CCSPlayerController player, string targetKnife)
+    private void ApplyNativeKnifeSubclass(CCSPlayerController player, string targetKnife)
     {
-        if (!IsAlivePlayer(player) || string.IsNullOrWhiteSpace(targetKnife))
+        if (!IsAliveHuman(player) || string.IsNullOrWhiteSpace(targetKnife))
             return;
 
         var currentKnife = GetKnife(player);
-        if (currentKnife != null && currentKnife.IsValid &&
-            string.Equals(currentKnife.DesignerName, targetKnife, StringComparison.OrdinalIgnoreCase))
-        {
+        if (currentKnife == null || !currentKnife.IsValid)
             return;
-        }
+
+        if (string.Equals(currentKnife.DesignerName, targetKnife, StringComparison.OrdinalIgnoreCase))
+            return;
 
         try
         {
-            if (currentKnife != null && currentKnife.IsValid)
-                currentKnife.Remove();
+            currentKnife.AcceptInput(
+                "ChangeSubclass",
+                activator: player.PlayerPawn.Value,
+                caller: player.PlayerPawn.Value,
+                value: targetKnife);
 
-            player.GiveNamedItem(targetKnife);
-            Console.WriteLine($"[ZombieKnifeMenu] Gave native {targetKnife} to {player.PlayerName}.");
+            Console.WriteLine($"[ZombieKnifeMenu] Applied native subclass {targetKnife} to human {player.PlayerName}.");
         }
         catch (Exception ex)
         {
             Console.WriteLine(
-                $"[ZombieKnifeMenu] Failed to give native knife {targetKnife} to {player.PlayerName}: {ex}");
+                $"[ZombieKnifeMenu] Failed to apply native subclass {targetKnife} to {player.PlayerName}: {ex}");
         }
     }
 

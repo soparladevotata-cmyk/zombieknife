@@ -18,5 +18,8 @@
   "KnockbackKnifeModel": "weapons/nozb1/knife/cudgel/cudgel.vmdl",
   "DamageKnifeModel": "weapons/nozb1/knife/blaine_spineedge/blaine_spineedge.vmdl",
   "VipKnifeModel": "weapons/nozb1/knife/baseball_batlow/baseball_batlow.vmdl",
+  "UseDirectModelSwap": true,
+  "DefaultHumanKnifeModel": "weapons/models/knife/knife_default_ct/weapon_knife_default_ct.vmdl",
+  "DefaultZombieKnifeModel": "weapons/models/knife/knife_default_t/weapon_knife_default_t.vmdl",
   "DefaultKnifeSubclass": "weapon_knife"
 }

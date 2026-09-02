@@ -45,6 +45,13 @@ public sealed class KnifeSettings
     public string DamageKnifeSubclass { get; set; } = "weapon_knife_skeleton";
     public string VipKnifeSubclass { get; set; } = "weapon_knife_widowmaker";
 
+    // ChangeSubclass expects numeric CS2 item definition indexes, not class names.
+    public ushort SpeedKnifeDefinitionIndex { get; set; } = 515;      // Butterfly
+    public ushort GravityKnifeDefinitionIndex { get; set; } = 507;    // Karambit
+    public ushort KnockbackKnifeDefinitionIndex { get; set; } = 508;  // M9 Bayonet
+    public ushort DamageKnifeDefinitionIndex { get; set; } = 525;     // Skeleton
+    public ushort VipKnifeDefinitionIndex { get; set; } = 523;        // Talon
+
     // Informational labels shown by !knifedebug. SetModel is never called.
     public string SpeedKnifeModel { get; set; } = "native: Butterfly Knife";
     public string GravityKnifeModel { get; set; } = "native: Karambit";
@@ -70,10 +77,10 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "3.1.6";
+    public override string ModuleVersion => "3.1.7";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
-        "Human-only native CS2 knife subclasses; zombie inventory is never mutated";
+        "Human-only native CS2 knife defindexes; zombie inventory is never mutated";
 
     private KnifeSettings _settings = new();
     private readonly Dictionary<string, KnifeType> _selections = new();
@@ -110,7 +117,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v3.1.6 HUMAN-ONLY loaded (CounterStrikeSharp 1.0.373 / .NET 10 compatible).");
+        Console.WriteLine("[ZombieKnifeMenu] v3.1.7 DEFIDX loaded (CounterStrikeSharp 1.0.373 / .NET 10 compatible).");
         Console.WriteLine("[ZombieKnifeMenu] T/Zombie knives are never removed, replaced, reset or model-swapped.");
     }
 
@@ -235,13 +242,18 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var validPlayer = player!;
         var selected = GetSelection(validPlayer);
         var subclass = GetSelectedSubclass(validPlayer);
+        var targetDefinitionIndex = GetSelectedDefinitionIndex(validPlayer);
         var knife = GetKnife(validPlayer);
         var entityName = knife != null && knife.IsValid ? knife.DesignerName : "NONE";
+        var currentDefinitionIndex = knife != null && knife.IsValid
+            ? knife.AttributeManager.Item.ItemDefinitionIndex
+            : 0;
         var selectedModel = GetSelectedModel(validPlayer);
         var human = IsAliveHuman(validPlayer);
 
         var msg =
             $"selected={KnifeName(selected)} | subclass={subclass} | " +
+            $"defindex={currentDefinitionIndex}->{targetDefinitionIndex} | " +
             $"team={validPlayer.TeamNum} | human={human} | knifeEntity={entityName} | " +
             $"wantedModel={selectedModel}";
 
@@ -583,7 +595,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             return;
 
         ValidateVipSelection(player);
-        ApplyNativeKnifeSubclass(player, GetSelectedSubclass(player));
+        ApplyNativeKnifeSubclass(player, GetSelectedDefinitionIndex(player));
     }
 
     private void ResetKnifeSubclass(CCSPlayerController? player)
@@ -597,16 +609,16 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         // Intentionally disabled. The plugin never swaps model resources directly.
     }
 
-    private void ApplyNativeKnifeSubclass(CCSPlayerController player, string targetKnife)
+    private void ApplyNativeKnifeSubclass(CCSPlayerController player, ushort targetDefinitionIndex)
     {
-        if (!IsAliveHuman(player) || string.IsNullOrWhiteSpace(targetKnife))
+        if (!IsAliveHuman(player) || targetDefinitionIndex == 0)
             return;
 
         var currentKnife = GetKnife(player);
         if (currentKnife == null || !currentKnife.IsValid)
             return;
 
-        if (string.Equals(currentKnife.DesignerName, targetKnife, StringComparison.OrdinalIgnoreCase))
+        if (currentKnife.AttributeManager.Item.ItemDefinitionIndex == targetDefinitionIndex)
             return;
 
         try
@@ -615,14 +627,14 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
                 "ChangeSubclass",
                 activator: player.PlayerPawn.Value,
                 caller: player.PlayerPawn.Value,
-                value: targetKnife);
+                value: targetDefinitionIndex.ToString());
 
-            Console.WriteLine($"[ZombieKnifeMenu] Applied native subclass {targetKnife} to human {player.PlayerName}.");
+            Console.WriteLine($"[ZombieKnifeMenu] Applied native knife defindex {targetDefinitionIndex} to human {player.PlayerName}.");
         }
         catch (Exception ex)
         {
             Console.WriteLine(
-                $"[ZombieKnifeMenu] Failed to apply native subclass {targetKnife} to {player.PlayerName}: {ex}");
+                $"[ZombieKnifeMenu] Failed to apply native knife defindex {targetDefinitionIndex} to {player.PlayerName}: {ex}");
         }
     }
 
@@ -834,6 +846,19 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             KnifeType.Damage => _settings.DamageKnifeSubclass,
             KnifeType.Vip => _settings.VipKnifeSubclass,
             _ => _settings.SpeedKnifeSubclass
+        };
+    }
+
+    private ushort GetSelectedDefinitionIndex(CCSPlayerController player)
+    {
+        return GetSelection(player) switch
+        {
+            KnifeType.Speed => _settings.SpeedKnifeDefinitionIndex,
+            KnifeType.Gravity => _settings.GravityKnifeDefinitionIndex,
+            KnifeType.Knockback => _settings.KnockbackKnifeDefinitionIndex,
+            KnifeType.Damage => _settings.DamageKnifeDefinitionIndex,
+            KnifeType.Vip => _settings.VipKnifeDefinitionIndex,
+            _ => _settings.SpeedKnifeDefinitionIndex
         };
     }
 

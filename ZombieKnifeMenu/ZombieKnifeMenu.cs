@@ -39,7 +39,7 @@ public sealed class KnifeSettings
     public string VipPermission { get; set; } = "@css/vip";
 
     // Native CS2 knives. The game creates their current AG2 viewmodels itself.
-    public string SpeedKnifeSubclass { get; set; } = "weapon_knife_butterfly";
+    public string SpeedKnifeSubclass { get; set; } = "weapon_knife_zk_speed";
     public string GravityKnifeSubclass { get; set; } = "weapon_knife_karambit";
     public string KnockbackKnifeSubclass { get; set; } = "weapon_knife_m9_bayonet";
     public string DamageKnifeSubclass { get; set; } = "weapon_knife_skeleton";
@@ -53,7 +53,7 @@ public sealed class KnifeSettings
     public ushort VipKnifeDefinitionIndex { get; set; } = 523;        // Talon
 
     // Informational labels shown by !knifedebug. SetModel is never called.
-    public string SpeedKnifeModel { get; set; } = "native: Butterfly Knife";
+    public string SpeedKnifeModel { get; set; } = "weapons/nozb1/knife/switch_feather/switch_feather.vmdl";
     public string GravityKnifeModel { get; set; } = "native: Karambit";
     public string KnockbackKnifeModel { get; set; } = "native: M9 Bayonet";
     public string DamageKnifeModel { get; set; } = "native: Skeleton Knife";
@@ -77,10 +77,10 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "3.1.7";
+    public override string ModuleVersion => "3.1.8";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
-        "Human-only native CS2 knife defindexes; zombie inventory is never mutated";
+        "Manual legacy Switch Feather diagnostic on top of stable native knives";
 
     private KnifeSettings _settings = new();
     private readonly Dictionary<string, KnifeType> _selections = new();
@@ -117,8 +117,9 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v3.1.7 DEFIDX loaded (CounterStrikeSharp 1.0.373 / .NET 10 compatible).");
+        Console.WriteLine("[ZombieKnifeMenu] v3.1.8 LEGACY-TEST loaded (CounterStrikeSharp 1.0.373 / .NET 10 compatible).");
         Console.WriteLine("[ZombieKnifeMenu] T/Zombie knives are never removed, replaced, reset or model-swapped.");
+        Console.WriteLine("[ZombieKnifeMenu] Legacy Switch Feather is applied only by manual test commands.");
     }
 
     public override void Unload(bool hotReload)
@@ -259,6 +260,93 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         validPlayer.PrintToChat($" \x04[Knife Debug]\x01 {msg}");
         Console.WriteLine($"[ZombieKnifeMenu DEBUG] {validPlayer.PlayerName}: {msg}");
+    }
+
+    [ConsoleCommand("css_testswitchworld", "UNSAFE TEST: apply legacy Switch Feather world model once")]
+    [CommandHelper(whoCanExecute: CommandUsage.CLIENT_ONLY)]
+    public void OnTestSwitchWorldCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!IsAliveHuman(player))
+            return;
+
+        var validPlayer = player!;
+        var knife = GetKnife(validPlayer);
+        if (knife == null || !knife.IsValid)
+        {
+            validPlayer.PrintToChat(" \x02[Knife Test]\x01 Nu am gasit cutitul humanului.");
+            return;
+        }
+
+        validPlayer.PrintToChat(" \x10[Knife Test]\x01 Aplic modelul legacy WORLD o singura data...");
+        Console.WriteLine($"[ZombieKnifeMenu TEST] Applying legacy world model to {validPlayer.PlayerName}.");
+
+        try
+        {
+            knife.SetModel(_settings.SpeedKnifeModel);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ZombieKnifeMenu TEST] Legacy world-model call failed: {ex}");
+        }
+    }
+
+    [ConsoleCommand("css_testswitchfeather", "UNSAFE TEST: apply full legacy Switch Feather subclass once")]
+    [CommandHelper(whoCanExecute: CommandUsage.CLIENT_ONLY)]
+    public void OnTestSwitchFeatherCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!IsAliveHuman(player))
+            return;
+
+        var validPlayer = player!;
+        var knife = GetKnife(validPlayer);
+        if (knife == null || !knife.IsValid)
+        {
+            validPlayer.PrintToChat(" \x02[Knife Test]\x01 Nu am gasit cutitul humanului.");
+            return;
+        }
+
+        validPlayer.PrintToChat(" \x02[Knife Test]\x01 Aplic subclass-ul legacy complet o singura data...");
+        Console.WriteLine($"[ZombieKnifeMenu TEST] Applying legacy subclass {_settings.SpeedKnifeSubclass} to {validPlayer.PlayerName}.");
+
+        try
+        {
+            knife.AcceptInput(
+                "ChangeSubclass",
+                activator: validPlayer.PlayerPawn.Value,
+                caller: validPlayer.PlayerPawn.Value,
+                value: _settings.SpeedKnifeSubclass);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ZombieKnifeMenu TEST] Legacy subclass call failed: {ex}");
+        }
+    }
+
+    [ConsoleCommand("css_restorenativeknife", "Restore the selected native knife after a legacy test")]
+    [CommandHelper(whoCanExecute: CommandUsage.CLIENT_ONLY)]
+    public void OnRestoreNativeKnifeCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!IsAliveHuman(player))
+            return;
+
+        var validPlayer = player!;
+        var knife = GetKnife(validPlayer);
+        if (knife == null || !knife.IsValid)
+            return;
+
+        knife.AcceptInput(
+            "ChangeSubclass",
+            activator: validPlayer.PlayerPawn.Value,
+            caller: validPlayer.PlayerPawn.Value,
+            value: "42");
+
+        Server.NextFrame(() =>
+        {
+            if (IsAliveHuman(validPlayer))
+                ApplyNativeKnifeSubclass(validPlayer, GetSelectedDefinitionIndex(validPlayer));
+        });
+
+        validPlayer.PrintToChat(" \x04[Knife Test]\x01 Cutitul nativ a fost restaurat.");
     }
 
     [ConsoleCommand("css_cutite", "Open Knife Menu")]

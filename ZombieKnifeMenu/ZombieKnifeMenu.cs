@@ -57,7 +57,7 @@ public sealed class KnifeSettings
     // CounterStrikeSharp 1.0.373 no longer exposes player viewmodel services.
     // Keep the VData subclass for the AG2 first-person model and set the weapon
     // entity model directly only as a third-person/world-model fallback.
-    public bool UseDirectModelSwap { get; set; } = true;
+    public bool UseDirectModelSwap { get; set; } = false;
     public string DefaultHumanKnifeModel { get; set; } =
         "weapons/models/knife/knife_default_ct/weapon_knife_default_ct.vmdl";
     public string DefaultZombieKnifeModel { get; set; } =
@@ -72,10 +72,10 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "3.1.3";
+    public override string ModuleVersion => "3.1.4";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
-        "Zombie:Reborn knife menu with 5 custom VData knives and world-model fallback";
+        "Crash-safe Zombie:Reborn knife menu; custom model operations disabled";
 
     private KnifeSettings _settings = new();
     private readonly Dictionary<string, KnifeType> _selections = new();
@@ -112,8 +112,8 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v3.1.3 loaded (CounterStrikeSharp 1.0.373 / .NET 10 compatible).");
-        Console.WriteLine("[ZombieKnifeMenu] Custom models: Speed=Switch Feather, Gravity=Morrowind, Knockback=Cudgel, Damage=Blaine Spineedge, VIP=Baseball Bat.");
+        Console.WriteLine("[ZombieKnifeMenu] v3.1.4 SAFE loaded (CounterStrikeSharp 1.0.373 / .NET 10 compatible).");
+        Console.WriteLine("[ZombieKnifeMenu] Custom model and subclass operations are disabled to prevent legacy AnimGraph crashes.");
     }
 
     public override void Unload(bool hotReload)
@@ -586,99 +586,19 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
 
         ValidateVipSelection(player);
 
-        var knife = GetKnife(player);
-        if (knife == null || !knife.IsValid)
-        {
-            Console.WriteLine($"[ZombieKnifeMenu] Knife entity not ready for {player.PlayerName}.");
-            return;
-        }
-
-        var subclass = GetSelectedSubclass(player);
-
-        try
-        {
-            // Work like a Source1 "deploy" refresh: reset the existing knife to its base
-            // VData first, then apply the selected subclass on the next frame.
-            knife.AcceptInput(
-                "ChangeSubclass",
-                activator: player.PlayerPawn.Value,
-                caller: player.PlayerPawn.Value,
-                value: _settings.DefaultKnifeSubclass);
-
-            Server.NextFrame(() =>
-            {
-                if (!IsAliveHuman(player))
-                    return;
-
-                var refreshedKnife = GetKnife(player);
-                if (refreshedKnife == null || !refreshedKnife.IsValid)
-                    return;
-
-                refreshedKnife.AcceptInput(
-                    "ChangeSubclass",
-                    activator: player.PlayerPawn.Value,
-                    caller: player.PlayerPawn.Value,
-                    value: subclass);
-
-                ApplyDirectKnifeModel(player, refreshedKnife);
-
-                // Item-equip and Zombie:Reborn can replace the predicted
-                // viewmodel one frame later. Reapply only the visual model.
-                Server.NextFrame(() =>
-                {
-                    if (!IsAliveHuman(player))
-                        return;
-
-                    var finalKnife = GetKnife(player);
-                    if (finalKnife != null && finalKnife.IsValid)
-                        ApplyDirectKnifeModel(player, finalKnife);
-                });
-
-                Console.WriteLine(
-                    $"[ZombieKnifeMenu] Applied {subclass} / {GetSelectedModel(player)} to {player.PlayerName}.");
-            });
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(
-                $"[ZombieKnifeMenu] Failed to apply subclass {subclass} to {player.PlayerName}: {ex}");
-        }
+        // SAFE BUILD: legacy AG1 .vmdl_c files can crash current CS2 when a
+        // player spawns. Do not call ChangeSubclass or SetModel until every
+        // custom knife has been recompiled for AnimGraph 2.
     }
 
     private void ResetKnifeSubclass(CCSPlayerController? player)
     {
-        if (!IsRealPlayer(player))
-            return;
-
-        var knife = GetKnife(player!);
-        if (knife == null || !knife.IsValid)
-            return;
-
-        knife.AcceptInput("ChangeSubclass", value: _settings.DefaultKnifeSubclass);
-
-        if (_settings.UseDirectModelSwap)
-        {
-            var defaultModel = player!.TeamNum == _settings.ZombieTeam
-                ? _settings.DefaultZombieKnifeModel
-                : _settings.DefaultHumanKnifeModel;
-
-            knife.SetModel(defaultModel);
-
-        }
+        // SAFE BUILD: no subclass/model mutation is performed.
     }
 
     private void ApplyDirectKnifeModel(CCSPlayerController player, CBasePlayerWeapon knife)
     {
-        if (!_settings.UseDirectModelSwap || !IsAliveHuman(player) || !knife.IsValid)
-            return;
-
-        var model = GetSelectedModel(player);
-        if (string.IsNullOrWhiteSpace(model))
-            return;
-
-        // Third-person / dropped weapon model. The first-person model is owned
-        // by the selected VData subclass on CounterStrikeSharp 1.0.373.
-        knife.SetModel(model);
+        // SAFE BUILD: no subclass/model mutation is performed.
     }
 
     private void ApplyMovementEffects()

@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "ZombieKnifeMenu/**"
+      - ".github/workflows/build-zombieknife.yml"
 
 jobs:
   build:
@@ -14,27 +17,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET
+      - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
-
-      - name: Find project
-        id: project
-        shell: bash
-        run: |
-          PROJECT=$(find . -name "ZombieKnifeMenu.csproj" -print -quit)
-          echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
-          echo "Found project: $PROJECT"
+          dotnet-version: "10.0.x"
 
       - name: Restore
-        run: dotnet restore "${{ steps.project.outputs.project }}"
+        run: dotnet restore "./ZombieKnifeMenu/ZombieKnifeMenu.csproj"
 
-      - name: Build
-        run: dotnet publish "${{ steps.project.outputs.project }}" -c Release -o publish
+      - name: Build Release
+        run: dotnet build "./ZombieKnifeMenu/ZombieKnifeMenu.csproj" --configuration Release --no-restore
 
       - name: Upload plugin
         uses: actions/upload-artifact@v4
         with:
-          name: ZombieKnifeMenu
-          path: publish/ZombieKnifeMenu.dll
+          name: ZombieKnifeMenu-net10
+          path: ZombieKnifeMenu/bin/Release/net10.0/
+          if-no-files-found: error

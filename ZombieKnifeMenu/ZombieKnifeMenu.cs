@@ -9,7 +9,6 @@ using CounterStrikeSharp.API.Modules.Memory;
 using CounterStrikeSharp.API.Modules.Menu;
 using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.Utils;
-using System.Runtime.InteropServices;
 
 namespace ZombieKnifeMenu;
 
@@ -57,7 +56,7 @@ public sealed class KnifeSettings
 
     // Current CS2 builds do not reliably refresh the first-person viewmodel when
     // only ChangeSubclass is used. Keep the VData subclass for weapon behavior,
-    // then also set the world model and the active CBaseViewModel directly.
+    // then also set the world model and the active viewmodel entity directly.
     public bool UseDirectModelSwap { get; set; } = true;
     public string DefaultHumanKnifeModel { get; set; } =
         "weapons/models/knife/knife_default_ct/weapon_knife_default_ct.vmdl";
@@ -73,7 +72,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "3.1.0";
+    public override string ModuleVersion => "3.1.1";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "Zombie:Reborn knife menu with 5 direct custom viewmodels and gameplay effects";
@@ -113,7 +112,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v3.1.0 loaded (direct CBaseViewModel swap).");
+        Console.WriteLine("[ZombieKnifeMenu] v3.1.1 loaded (API-compatible direct viewmodel swap).");
         Console.WriteLine("[ZombieKnifeMenu] Custom models: Speed=Switch Feather, Gravity=Morrowind, Knockback=Cudgel, Damage=Blaine Spineedge, VIP=Baseball Bat.");
     }
 
@@ -241,13 +240,13 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var knife = GetKnife(validPlayer);
         var entityName = knife != null && knife.IsValid ? knife.DesignerName : "NONE";
         var selectedModel = GetSelectedModel(validPlayer);
-        var currentViewModel = GetViewModel(validPlayer)?.VMName ?? "NONE";
+        var currentViewModel = GetViewModel(validPlayer)?.DesignerName ?? "NONE";
         var human = IsAliveHuman(validPlayer);
 
         var msg =
             $"selected={KnifeName(selected)} | subclass={subclass} | " +
             $"team={validPlayer.TeamNum} | human={human} | knifeEntity={entityName} | " +
-            $"wantedModel={selectedModel} | currentViewModel={currentViewModel}";
+            $"wantedModel={selectedModel} | viewModelEntity={currentViewModel}";
 
         validPlayer.PrintToChat($" \x04[Knife Debug]\x01 {msg}");
         Console.WriteLine($"[ZombieKnifeMenu DEBUG] {validPlayer.PlayerName}: {msg}");
@@ -941,9 +940,9 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         return null;
     }
 
-    // CCSGOViewModel was removed from recent CounterStrikeSharp builds. The
-    // current entity is CBaseViewModel, reached through m_hViewModel[0].
-    private static CBaseViewModel? GetViewModel(CCSPlayerController player)
+    // Concrete viewmodel wrappers differ between CounterStrikeSharp builds.
+    // CBaseModelEntity is the stable base wrapper and still exposes SetModel().
+    private static CBaseModelEntity? GetViewModel(CCSPlayerController player)
     {
         var servicesHandle = player.PlayerPawn.Value?.ViewModelServices?.Handle;
         if (servicesHandle == null || !servicesHandle.HasValue)
@@ -953,8 +952,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var firstHandleAddress = services.Handle +
             Schema.GetSchemaOffset("CCSPlayer_ViewModelServices", "m_hViewModel");
 
-        var viewModelHandles = MemoryMarshal.CreateSpan(ref firstHandleAddress, 3);
-        return new CHandle<CBaseViewModel>(viewModelHandles[0]).Value;
+        return new CHandle<CBaseModelEntity>(firstHandleAddress).Value;
     }
 
     private static bool IsKnife(CBasePlayerWeapon weapon)

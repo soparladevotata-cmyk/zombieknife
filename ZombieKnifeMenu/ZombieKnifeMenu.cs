@@ -72,7 +72,7 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "3.1.2";
+    public override string ModuleVersion => "3.1.3";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
         "Zombie:Reborn knife menu with 5 custom VData knives and world-model fallback";
@@ -112,7 +112,7 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v3.1.2 loaded (CounterStrikeSharp 1.0.373 compatible).");
+        Console.WriteLine("[ZombieKnifeMenu] v3.1.3 loaded (CounterStrikeSharp 1.0.373 / .NET 10 compatible).");
         Console.WriteLine("[ZombieKnifeMenu] Custom models: Speed=Switch Feather, Gravity=Morrowind, Knockback=Cudgel, Damage=Blaine Spineedge, VIP=Baseball Bat.");
     }
 

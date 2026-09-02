@@ -38,21 +38,19 @@ public sealed class KnifeSettings
     // VIP Knife requires this permission. @css/root is accepted too.
     public string VipPermission { get; set; } = "@css/vip";
 
-    // Modern CS2 / AnimGraph2 uses weapon VData subclasses.
-    // These names must exist in scripts/weapons.vdata inside the mounted addon.
-    public string SpeedKnifeSubclass { get; set; } = "weapon_knife_zk_speed";
-    public string GravityKnifeSubclass { get; set; } = "weapon_knife_zk_gravity";
-    public string KnockbackKnifeSubclass { get; set; } = "weapon_knife_zk_knockback";
-    public string DamageKnifeSubclass { get; set; } = "weapon_knife_zk_damage";
-    public string VipKnifeSubclass { get; set; } = "weapon_knife_zk_vip";
+    // Native CS2 knives. The game creates their current AG2 viewmodels itself.
+    public string SpeedKnifeSubclass { get; set; } = "weapon_knife_butterfly";
+    public string GravityKnifeSubclass { get; set; } = "weapon_knife_karambit";
+    public string KnockbackKnifeSubclass { get; set; } = "weapon_knife_m9_bayonet";
+    public string DamageKnifeSubclass { get; set; } = "weapon_knife_skeleton";
+    public string VipKnifeSubclass { get; set; } = "weapon_knife_widowmaker";
 
-    // These are informational labels for the five custom Workshop models.
-    // The plugin applies the subclasses above; scripts/weapons.vdata maps each subclass to the model.
-    public string SpeedKnifeModel { get; set; } = "weapons/nozb1/knife/switch_feather/switch_feather.vmdl";
-    public string GravityKnifeModel { get; set; } = "weapons/nozb1/knife/morrowind/morrowind.vmdl";
-    public string KnockbackKnifeModel { get; set; } = "weapons/nozb1/knife/cudgel/cudgel.vmdl";
-    public string DamageKnifeModel { get; set; } = "weapons/nozb1/knife/blaine_spineedge/blaine_spineedge.vmdl";
-    public string VipKnifeModel { get; set; } = "weapons/nozb1/knife/baseball_batlow/baseball_batlow.vmdl";
+    // Informational labels shown by !knifedebug. SetModel is never called.
+    public string SpeedKnifeModel { get; set; } = "native: Butterfly Knife";
+    public string GravityKnifeModel { get; set; } = "native: Karambit";
+    public string KnockbackKnifeModel { get; set; } = "native: M9 Bayonet";
+    public string DamageKnifeModel { get; set; } = "native: Skeleton Knife";
+    public string VipKnifeModel { get; set; } = "native: Talon Knife";
 
     // CounterStrikeSharp 1.0.373 no longer exposes player viewmodel services.
     // Keep the VData subclass for the AG2 first-person model and set the weapon
@@ -72,10 +70,10 @@ public sealed class KnifeSettings
 public sealed class ZombieKnifeMenuPlugin : BasePlugin
 {
     public override string ModuleName => "Zombie Knife Menu";
-    public override string ModuleVersion => "3.1.4";
+    public override string ModuleVersion => "3.1.5";
     public override string ModuleAuthor => "OpenAI";
     public override string ModuleDescription =>
-        "Crash-safe Zombie:Reborn knife menu; custom model operations disabled";
+        "Zombie:Reborn knife menu using native CS2 AG2 knife entities";
 
     private KnifeSettings _settings = new();
     private readonly Dictionary<string, KnifeType> _selections = new();
@@ -112,8 +110,8 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
         var ticks = Math.Max(1, _settings.RefreshEveryTicks);
         AddTickTimer(ticks, ApplyMovementEffects, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
 
-        Console.WriteLine("[ZombieKnifeMenu] v3.1.4 SAFE loaded (CounterStrikeSharp 1.0.373 / .NET 10 compatible).");
-        Console.WriteLine("[ZombieKnifeMenu] Custom model and subclass operations are disabled to prevent legacy AnimGraph crashes.");
+        Console.WriteLine("[ZombieKnifeMenu] v3.1.5 NATIVE loaded (CounterStrikeSharp 1.0.373 / .NET 10 compatible).");
+        Console.WriteLine("[ZombieKnifeMenu] Native AG2 knives enabled; legacy Workshop models remain disabled.");
     }
 
     public override void Unload(bool hotReload)
@@ -585,20 +583,52 @@ public sealed class ZombieKnifeMenuPlugin : BasePlugin
             return;
 
         ValidateVipSelection(player);
-
-        // SAFE BUILD: legacy AG1 .vmdl_c files can crash current CS2 when a
-        // player spawns. Do not call ChangeSubclass or SetModel until every
-        // custom knife has been recompiled for AnimGraph 2.
+        GiveNativeKnife(player, GetSelectedSubclass(player));
     }
 
     private void ResetKnifeSubclass(CCSPlayerController? player)
     {
-        // SAFE BUILD: no subclass/model mutation is performed.
+        if (!IsAlivePlayer(player))
+            return;
+
+        var defaultKnife = player!.TeamNum == _settings.ZombieTeam
+            ? "weapon_knife_t"
+            : _settings.DefaultKnifeSubclass;
+
+        GiveNativeKnife(player, defaultKnife);
     }
 
     private void ApplyDirectKnifeModel(CCSPlayerController player, CBasePlayerWeapon knife)
     {
-        // SAFE BUILD: no subclass/model mutation is performed.
+        // Intentionally disabled. Native GiveNamedItem creates the matching
+        // first-person and world model without touching legacy Workshop assets.
+    }
+
+    private void GiveNativeKnife(CCSPlayerController player, string targetKnife)
+    {
+        if (!IsAlivePlayer(player) || string.IsNullOrWhiteSpace(targetKnife))
+            return;
+
+        var currentKnife = GetKnife(player);
+        if (currentKnife != null && currentKnife.IsValid &&
+            string.Equals(currentKnife.DesignerName, targetKnife, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        try
+        {
+            if (currentKnife != null && currentKnife.IsValid)
+                currentKnife.Remove();
+
+            player.GiveNamedItem(targetKnife);
+            Console.WriteLine($"[ZombieKnifeMenu] Gave native {targetKnife} to {player.PlayerName}.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"[ZombieKnifeMenu] Failed to give native knife {targetKnife} to {player.PlayerName}: {ex}");
+        }
     }
 
     private void ApplyMovementEffects()
